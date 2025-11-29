@@ -73,7 +73,11 @@ def main(args):
         image_size=config['vjepa2']['image_size'],
         normalize_embeddings=normalize_embeddings,
         n_spatial_tokens=n_spatial_tokens,
+        use_temporal_ensemble=args.temporal_ensemble,
     )
+
+    if args.temporal_ensemble:
+        print("Using temporal ensembling with majority voting for gripper")
 
     # Run evaluation
     if args.suite == 'all':
@@ -117,6 +121,8 @@ if __name__ == "__main__":
                         help="Number of episodes per task")
     parser.add_argument("--save_results", type=str, default=None,
                         help="Path to save results JSON")
+    parser.add_argument("--temporal_ensemble", action="store_true",
+                        help="Enable temporal ensembling with gripper majority voting")
 
     args = parser.parse_args()
     main(args)

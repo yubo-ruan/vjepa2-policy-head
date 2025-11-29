@@ -530,6 +530,10 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
 
     Uses encode_video_spatial() and encode_image_spatial() instead of
     mean-pooled embeddings.
+
+    Supports temporal ensembling with majority voting for gripper:
+    - Average predictions from overlapping action chunks
+    - Use majority vote for gripper (binary decision)
     """
 
     def __init__(
@@ -544,6 +548,7 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
         image_size: int = 256,
         normalize_embeddings: bool = True,
         n_spatial_tokens: int = 64,
+        use_temporal_ensemble: bool = True,
     ):
         # Don't call parent __init__ fully, just set attributes
         if not LIBERO_AVAILABLE:
@@ -559,6 +564,7 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
         self.image_size = image_size
         self.normalize_embeddings = normalize_embeddings
         self.n_spatial_tokens = n_spatial_tokens
+        self.use_temporal_ensemble = use_temporal_ensemble
 
         self.model.eval()
 
@@ -571,6 +577,11 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
     ) -> Dict:
         """
         Run a single evaluation episode using spatial tokens.
+
+        With temporal ensembling enabled:
+        - Store all predictions for each future timestep
+        - Average position/rotation predictions across overlapping chunks
+        - Use majority vote for gripper (binary decision)
 
         Args:
             env: LIBERO environment
@@ -585,8 +596,11 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
         # Initialize buffers
         frame_buffer = []
         proprio_buffer = []
-        action_buffer = []
         all_actions = []
+
+        # Temporal ensembling: store predictions for each future timestep
+        # action_history[t] = list of (action, weight) predictions for timestep t
+        action_history = defaultdict(list)
 
         total_reward = 0
         success = False
@@ -608,7 +622,10 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
             while len(proprio_buffer) < self.proprio_history:
                 proprio_buffer.insert(0, proprio_buffer[0])
 
-            if len(action_buffer) == 0:
+            # Decide if we need to replan
+            need_replan = (step % self.execute_steps == 0) or (step not in action_history)
+
+            if need_replan:
                 # Prepare inputs
                 video = np.stack(frame_buffer)
                 video_tensor = torch.from_numpy(video).permute(0, 3, 1, 2).float() / 255.0
@@ -638,20 +655,61 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
                     print(f"    Video tokens shape: {video_tokens.shape}")
                     print(f"    Goal tokens shape: {goal_tokens.shape}")
                     print(f"    Video tokens[0] norm: {video_tokens[0, 0].norm().item():.4f}")
+                    print(f"    Temporal ensembling: {self.use_temporal_ensemble}")
 
                 # Get action chunk using spatial tokens
                 action_chunk = self.model.forward_with_precomputed(
                     video_tokens, goal_tokens, proprio_tensor
                 )
-                action_chunk = action_chunk[0].cpu().numpy()
+                action_chunk = action_chunk[0].cpu().numpy()  # (chunk_size, action_dim)
 
-                action_buffer = list(action_chunk[:self.execute_steps])
+                if self.use_temporal_ensemble:
+                    # Store predictions for future timesteps with exponential decay weight
+                    # Earlier predictions in chunk are more reliable
+                    for i in range(min(self.chunk_size, self.max_episode_steps - step)):
+                        future_step = step + i
+                        # Weight: higher for earlier predictions in chunk
+                        weight = np.exp(-0.1 * i)  # Exponential decay
+                        action_history[future_step].append((action_chunk[i], weight))
+                else:
+                    # No ensembling: just store for execute_steps
+                    for i in range(self.execute_steps):
+                        future_step = step + i
+                        if future_step < self.max_episode_steps:
+                            action_history[future_step] = [(action_chunk[i], 1.0)]
 
-            action = action_buffer.pop(0)
+            # Get action for current step
+            if self.use_temporal_ensemble and step in action_history and len(action_history[step]) > 0:
+                # Weighted average for position/rotation (dims 0-5)
+                predictions = action_history[step]
+                weights = np.array([w for _, w in predictions])
+                actions = np.array([a for a, _ in predictions])
 
-            # FIX: Threshold gripper to binary (-1 or 1)
-            # This addresses high gripper error (~0.29) from model predictions
-            action[6] = 1.0 if action[6] > 0 else -1.0
+                # Normalize weights
+                weights = weights / weights.sum()
+
+                # Weighted average for continuous actions (position, rotation)
+                action = np.zeros(7)
+                action[:6] = np.sum(actions[:, :6] * weights[:, None], axis=0)
+
+                # MAJORITY VOTE for gripper (binary decision)
+                # Convert to votes: >0 means open (1), <=0 means close (-1)
+                gripper_votes = [1 if a[6] > 0 else -1 for a, _ in predictions]
+                # Weight the votes
+                weighted_votes = sum(v * w for v, w in zip(gripper_votes, weights))
+                action[6] = 1.0 if weighted_votes > 0 else -1.0
+
+                if verbose and step % 50 == 0:
+                    print(f"  Step {step}: {len(predictions)} predictions, "
+                          f"gripper votes: {gripper_votes}, result: {action[6]}")
+            else:
+                # Fallback: use first available prediction
+                if step in action_history and len(action_history[step]) > 0:
+                    action = action_history[step][0][0].copy()
+                    action[6] = 1.0 if action[6] > 0 else -1.0
+                else:
+                    # No prediction available - use zero action
+                    action = np.zeros(7)
 
             all_actions.append(action)
 
@@ -673,6 +731,10 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
                 elif reward > 0.9:
                     success = True
                 break
+
+            # Clean up old history entries to save memory
+            if step in action_history:
+                del action_history[step]
 
         return {
             'success': success,
