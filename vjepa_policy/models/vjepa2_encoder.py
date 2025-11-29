@@ -361,6 +361,9 @@ class VJEPA2Encoder(nn.Module):
         """
         Encode single image to spatial tokens.
 
+        For images, we only have 1 tubelet (2 frames), so we handle the
+        reshape differently than for video.
+
         Args:
             image: (B, C, H, W) image tensor, values in [0, 1]
             target_spatial: Target spatial resolution (8 -> 64 tokens)
@@ -370,7 +373,29 @@ class VJEPA2Encoder(nn.Module):
         """
         # Expand to video format: (B, C, H, W) -> (B, C, 2, H, W)
         video = image.unsqueeze(2).repeat(1, 1, 2, 1, 1)
-        return self.encode_video_spatial(video, target_spatial)
+
+        # Get patch tokens: (B, N, D) where N = 1 * 16 * 16 = 256 (for 2 frames)
+        patches = self.encode_patches(video)
+        B, N, D = patches.shape
+
+        # For image: N = 1 * spatial_size * spatial_size = 256
+        # So spatial_size = sqrt(256) = 16
+        spatial_size = int(N ** 0.5)
+
+        # Reshape to (B, H_spatial, W_spatial, D)
+        patches = patches.view(B, spatial_size, spatial_size, D)
+
+        # Rearrange for spatial pooling: (B, D, H, W)
+        patches = patches.permute(0, 3, 1, 2)
+
+        # Spatial downsampling: (B, D, 8, 8)
+        pool = nn.AdaptiveAvgPool2d((target_spatial, target_spatial))
+        patches = pool(patches)
+
+        # Reshape to (B, 64, D)
+        patches = patches.permute(0, 2, 3, 1).reshape(B, target_spatial * target_spatial, D)
+
+        return patches
 
     def forward(
         self,
