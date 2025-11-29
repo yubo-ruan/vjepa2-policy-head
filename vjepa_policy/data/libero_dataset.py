@@ -306,6 +306,16 @@ class PrecomputedEmbeddingDataset(Dataset):
     """
     Dataset with pre-computed V-JEPA 2 embeddings.
     Much faster for training (no encoder forward pass needed).
+
+    Expected directory structure:
+        embedding_dir/
+            train/
+                sample_000000.pt
+                sample_000001.pt
+                ...
+            val/
+                sample_000000.pt
+                ...
     """
 
     def __init__(
@@ -318,19 +328,23 @@ class PrecomputedEmbeddingDataset(Dataset):
         self.embedding_dir = Path(embedding_dir)
         self.split = split
 
-        # Load all embedding files
-        all_files = sorted(self.embedding_dir.glob("*.pt"))
-
-        # Split
-        random.seed(seed)
-        shuffled = all_files.copy()
-        random.shuffle(shuffled)
-        n_train = int(len(shuffled) * train_ratio)
-
-        if split == 'train':
-            self.files = shuffled[:n_train]
+        # Check for split subdirectory (new format)
+        split_dir = self.embedding_dir / split
+        if split_dir.exists():
+            # New format: embeddings are pre-split into train/val directories
+            self.files = sorted(split_dir.glob("*.pt"))
         else:
-            self.files = shuffled[n_train:]
+            # Old format: all files in one directory, split manually
+            all_files = sorted(self.embedding_dir.glob("*.pt"))
+            random.seed(seed)
+            shuffled = all_files.copy()
+            random.shuffle(shuffled)
+            n_train = int(len(shuffled) * train_ratio)
+
+            if split == 'train':
+                self.files = shuffled[:n_train]
+            else:
+                self.files = shuffled[n_train:]
 
         print(f"[{split}] Loaded {len(self.files)} pre-computed samples")
 
@@ -340,9 +354,13 @@ class PrecomputedEmbeddingDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         data = torch.load(self.files[idx])
 
+        # Support both naming conventions
+        current_emb = data.get('current_emb', data.get('video_emb'))
+        goal_emb = data.get('goal_emb')
+
         return {
-            'current_emb': data['current_emb'],
-            'goal_emb': data['goal_emb'],
+            'current_emb': current_emb,
+            'goal_emb': goal_emb,
             'proprio': data['proprio'],
             'actions': data['actions'],
         }
