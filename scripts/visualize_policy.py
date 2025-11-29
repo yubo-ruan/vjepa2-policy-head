@@ -121,10 +121,10 @@ def annotate_frame(frame: np.ndarray, action: np.ndarray, step: int,
     # Get dimensions
     h, w = frame.shape[:2]
 
-    # Add black bar at top for text
+    # Add black bar at BOTTOM for text (frame will be viewed right-side up)
     overlay_height = 100
     overlay = np.zeros((overlay_height, w, 3), dtype=np.uint8)
-    frame = np.vstack([overlay, frame])
+    frame = np.vstack([frame, overlay])
 
     # Font settings
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -134,68 +134,49 @@ def annotate_frame(frame: np.ndarray, action: np.ndarray, step: int,
     red = (0, 0, 255)
     cyan = (255, 255, 0)
 
+    # Text Y positions (relative to bottom overlay)
+    y_base = h + 15  # Start in the overlay area
+
     # Step counter
-    cv2.putText(frame, f"Step: {step}", (10, 18), font, 0.5, white, 1)
+    cv2.putText(frame, f"Step: {step}", (10, y_base), font, 0.5, white, 1)
 
     # Success indicator
     if success:
-        cv2.putText(frame, "SUCCESS!", (w - 100, 18), font, 0.6, green, 2)
+        cv2.putText(frame, "SUCCESS!", (w - 100, y_base), font, 0.6, green, 2)
 
     # Predicted action - Position
     cv2.putText(frame, f"Pred pos: dx:{action[0]:+.3f} dy:{action[1]:+.3f} dz:{action[2]:+.3f}",
-                (10, 38), font, 0.4, green, 1)
+                (10, y_base + 18), font, 0.4, green, 1)
 
     # Predicted action - Rotation
     cv2.putText(frame, f"Pred rot: rx:{action[3]:+.3f} ry:{action[4]:+.3f} rz:{action[5]:+.3f}",
-                (10, 53), font, 0.4, yellow, 1)
+                (10, y_base + 33), font, 0.4, yellow, 1)
 
     # Gripper
     gripper_val = action[6]
     gripper_text = "CLOSE" if gripper_val > 0 else "OPEN"
     gripper_color = red if gripper_val > 0 else green
     cv2.putText(frame, f"Gripper: {gripper_text} ({gripper_val:+.2f})",
-                (10, 68), font, 0.4, gripper_color, 1)
+                (10, y_base + 48), font, 0.4, gripper_color, 1)
 
     # Ground truth action (if available)
     if gt_action is not None:
         cv2.putText(frame, f"GT pos:   dx:{gt_action[0]:+.3f} dy:{gt_action[1]:+.3f} dz:{gt_action[2]:+.3f}",
-                    (10, 83), font, 0.4, cyan, 1)
+                    (10, y_base + 63), font, 0.4, cyan, 1)
 
         # Position error
         pos_error = np.abs(action[:3] - gt_action[:3]).mean()
-        cv2.putText(frame, f"Pos Err: {pos_error:.3f}", (w - 120, 38), font, 0.4,
+        cv2.putText(frame, f"Pos Err: {pos_error:.3f}", (w - 120, y_base + 18), font, 0.4,
                     red if pos_error > 0.15 else green, 1)
 
     # Action magnitude bar (visual indicator)
     action_mag = np.linalg.norm(action[:3])
     bar_width = int(min(action_mag * 500, w - 20))
-    cv2.rectangle(frame, (10, 95), (10 + bar_width, 98), green, -1)
+    cv2.rectangle(frame, (10, y_base + 75), (10 + bar_width, y_base + 78), green, -1)
 
     return frame
 
 
-def save_video(frames: list, path: str, fps: int = 30):
-    """Save frames as MP4 video."""
-    if len(frames) == 0:
-        print("No frames to save!")
-        return
-
-    h, w = frames[0].shape[:2]
-
-    # Use mp4v codec
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(path, fourcc, fps, (w, h))
-
-    for frame in frames:
-        # Ensure BGR format for OpenCV
-        if len(frame.shape) == 3 and frame.shape[2] == 3:
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        else:
-            frame_bgr = frame
-        out.write(frame_bgr)
-
-    out.release()
-    print(f"Saved {len(frames)} frames to {path}")
 
 
 def save_gif(frames: list, path: str, fps: int = 10, flip: bool = True):
@@ -203,7 +184,7 @@ def save_gif(frames: list, path: str, fps: int = 10, flip: bool = True):
 
     Args:
         frames: List of RGB frames
-        path: Output path (will be saved as .gif)
+        path: Output path for GIF file
         fps: Frames per second (lower = smaller file)
         flip: Whether to vertically flip (fixes upside-down simulation render)
     """
@@ -238,8 +219,8 @@ def save_gif(frames: list, path: str, fps: int = 10, flip: bool = True):
     sample_rate = max(1, len(pil_frames) // 100)  # Keep ~100 frames max
     sampled_frames = pil_frames[::sample_rate]
 
-    # Save as GIF
-    gif_path = path.replace('.mp4', '.gif')
+    # Ensure path ends with .gif
+    gif_path = path if path.endswith('.gif') else path + '.gif'
     sampled_frames[0].save(
         gif_path,
         save_all=True,
@@ -344,8 +325,9 @@ def evaluate_and_record(
         # Threshold gripper
         action[6] = 1.0 if action[6] > 0 else -1.0
 
-        # Annotate and store frame
-        annotated = annotate_frame(current_frame, action, step, success=success)
+        # Flip frame first (simulation renders upside-down), then annotate
+        flipped_frame = np.flipud(current_frame.copy())
+        annotated = annotate_frame(flipped_frame, action, step, success=success)
         frames.append(annotated)
         actions_taken.append(action.copy())
 
@@ -366,7 +348,8 @@ def evaluate_and_record(
             print(f"  SUCCESS at step {step}!")
             # Add a few more frames with success overlay
             for _ in range(30):
-                annotated = annotate_frame(current_frame, action, step, success=True)
+                flipped_success = np.flipud(current_frame.copy())
+                annotated = annotate_frame(flipped_success, action, step, success=True)
                 frames.append(annotated)
             break
 
@@ -375,25 +358,18 @@ def evaluate_and_record(
 
     env.close()
 
-    # Save video and GIF
+    # Save GIF only
     task_name = task.language if hasattr(task, 'language') else f"task_{task_idx}"
     task_name_clean = task_name[:50].replace(" ", "_").replace("/", "_")
-    video_path = f"{save_dir}/task{task_idx}_ep{episode_idx}_{task_name_clean}.mp4"
-    save_video(frames, video_path, fps=30)
+    gif_path = f"{save_dir}/task{task_idx}_ep{episode_idx}_{task_name_clean}.gif"
 
-    # Save GIF (viewable in VSCode)
-    save_gif(frames, video_path, fps=10, flip=True)
-
-    # Save actions
-    actions_path = video_path.replace('.mp4', '_actions.npy')
-    np.save(actions_path, np.array(actions_taken))
-    print(f"  Saved actions to {actions_path}")
+    # Save GIF (viewable in VSCode) - no flip needed as frames are already flipped
+    save_gif(frames, gif_path, fps=10, flip=False)
 
     return {
         'success': success,
         'steps': len(actions_taken),
-        'video_path': video_path,
-        'gif_path': video_path.replace('.mp4', '.gif'),
+        'gif_path': gif_path,
     }
 
 
@@ -410,8 +386,8 @@ def main():
                         help='Task index to visualize')
     parser.add_argument('--n_episodes', type=int, default=3,
                         help='Number of episodes to record')
-    parser.add_argument('--save_dir', type=str, default='/workspace/videos',
-                        help='Directory to save videos')
+    parser.add_argument('--save_dir', type=str, default='/workspace/video_output',
+                        help='Directory to save GIFs')
     parser.add_argument('--max_steps', type=int, default=300,
                         help='Maximum steps per episode')
     args = parser.parse_args()
@@ -462,10 +438,10 @@ def main():
     print("=" * 60)
     successes = sum(r['success'] for r in results)
     print(f"Success rate: {successes}/{len(results)} ({100*successes/len(results):.0f}%)")
-    print(f"\nVideos saved to: {args.save_dir}/")
+    print(f"\nGIFs saved to: {args.save_dir}/")
     for r in results:
         status = "SUCCESS" if r['success'] else "FAIL"
-        print(f"  {Path(r['video_path']).name}: {status} ({r['steps']} steps)")
+        print(f"  {Path(r['gif_path']).name}: {status} ({r['steps']} steps)")
 
 
 if __name__ == "__main__":

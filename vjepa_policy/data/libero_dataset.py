@@ -476,6 +476,184 @@ class RobustSpatialEmbeddingDataset(Dataset):
         self.training = training
 
 
+class GripperFocusedSpatialDataset(Dataset):
+    """
+    Dataset with gripper-focused augmentation for spatial embeddings.
+
+    Integrates:
+    1. Oversampling of gripper transitions (5×)
+    2. Temporal jitter of transition timing (±5 steps)
+    3. Per-timestep weights for loss focusing
+
+    This addresses the gripper timing issue where the model closes
+    the gripper ~20-30 steps too early.
+    """
+
+    def __init__(
+        self,
+        embedding_dir: str,
+        split: str = "train",
+        train_ratio: float = 0.9,
+        seed: int = 42,
+        # Gripper augmentation params
+        gripper_augmentation: bool = True,
+        oversample_transitions: bool = True,
+        oversample_factor: int = 5,
+        jitter_range: int = 5,
+        jitter_prob: float = 0.5,
+        transition_weight: float = 5.0,
+        transition_window: int = 10,
+        # Embedding augmentation
+        noise_std: float = 0.05,
+        normalize: bool = True,
+    ):
+        """
+        Args:
+            embedding_dir: Directory with pre-computed embeddings
+            split: 'train' or 'val'
+            train_ratio: Ratio of demos for training
+            seed: Random seed
+            gripper_augmentation: Enable gripper jitter and noise
+            oversample_transitions: Oversample windows with transitions
+            oversample_factor: How many times to oversample (5× = 5)
+            jitter_range: Max timesteps to shift transitions
+            jitter_prob: Probability of applying jitter
+            transition_weight: Loss weight multiplier for transitions
+            transition_window: Window around transition to upweight
+            noise_std: Std of embedding noise
+            normalize: Whether to L2-normalize embeddings
+        """
+        from .gripper_augmentation import GripperAugmentationPipeline, GripperFocusedSampler
+
+        self.embedding_dir = Path(embedding_dir)
+        self.split = split
+        self.gripper_augmentation = gripper_augmentation
+        self.oversample_transitions = oversample_transitions
+        self.noise_std = noise_std
+        self.normalize = normalize
+        self.training = (split == 'train')
+
+        # Load all samples
+        split_dir = self.embedding_dir / split
+        if split_dir.exists():
+            self.files = sorted(split_dir.glob("*.pt"))
+        else:
+            # Old format: all files in one directory
+            all_files = sorted(self.embedding_dir.glob("*.pt"))
+            random.seed(seed)
+            shuffled = all_files.copy()
+            random.shuffle(shuffled)
+            n_train = int(len(shuffled) * train_ratio)
+            if split == 'train':
+                self.files = shuffled[:n_train]
+            else:
+                self.files = shuffled[n_train:]
+
+        # Load all data into memory for oversampling
+        print(f"[{split}] Loading {len(self.files)} samples...")
+        self.samples = []
+        for f in self.files:
+            data = torch.load(f)
+            self.samples.append({
+                'video_tokens': data.get('video_emb', data.get('current_emb')),
+                'goal_tokens': data.get('goal_emb'),
+                'proprio': data['proprio'],
+                'actions': data['actions'],
+            })
+
+        # Setup gripper augmentation pipeline
+        if gripper_augmentation:
+            self.augmenter = GripperAugmentationPipeline(
+                jitter_range=jitter_range,
+                jitter_prob=jitter_prob,
+                noise_std=0.05,  # Gripper noise
+                noise_prob=0.3,
+                transition_weight=transition_weight,
+                transition_window=transition_window,
+            )
+        else:
+            self.augmenter = None
+
+        # Setup oversampling - oversample samples that contain gripper transitions
+        if oversample_transitions and split == 'train':
+            self.sample_indices = self._build_oversampled_indices(oversample_factor)
+            print(f"[{split}] Gripper-focused sampling enabled:")
+            print(f"  Total samples: {len(self.sample_indices)} (was {len(self.samples)})")
+            n_transition = sum(1 for _, has_trans in self.sample_indices if has_trans)
+            print(f"  Transition samples: {n_transition} ({n_transition/len(self.sample_indices):.1%})")
+            print(f"  Oversample factor: {oversample_factor}×")
+        else:
+            self.sample_indices = [(i, False) for i in range(len(self.samples))]
+
+        print(f"[{split}] Loaded {len(self)} samples with gripper augmentation")
+
+    def _has_transition(self, actions: torch.Tensor) -> bool:
+        """Check if action chunk contains a gripper transition."""
+        gripper = actions[:, 6]
+        for t in range(1, len(gripper)):
+            if abs(gripper[t].item() - gripper[t-1].item()) > 0.5:
+                return True
+        return False
+
+    def _build_oversampled_indices(self, oversample_factor: int) -> List[Tuple[int, bool]]:
+        """
+        Build list of (sample_idx, has_transition) with oversampling.
+
+        Samples containing gripper transitions are repeated oversample_factor times.
+        """
+        indices = []
+        for i, sample in enumerate(self.samples):
+            has_transition = self._has_transition(sample['actions'])
+            if has_transition:
+                # Oversample transitions
+                for _ in range(oversample_factor):
+                    indices.append((i, True))
+            else:
+                indices.append((i, False))
+        return indices
+
+    def __len__(self) -> int:
+        return len(self.sample_indices)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        # Get sample (with potential oversampling)
+        sample_idx, _ = self.sample_indices[idx]
+        sample = self.samples[sample_idx]
+
+        video_tokens = sample['video_tokens'].clone()
+        goal_tokens = sample['goal_tokens'].clone()
+        proprio = sample['proprio'].clone()
+        actions = sample['actions'].clone()
+
+        # Apply gripper augmentation (training only)
+        if self.training and self.augmenter is not None:
+            actions, weights = self.augmenter(actions)
+        else:
+            weights = torch.ones(len(actions))
+
+        # Apply embedding noise (training only)
+        if self.training and self.noise_std > 0:
+            video_tokens = video_tokens + torch.randn_like(video_tokens) * self.noise_std
+            goal_tokens = goal_tokens + torch.randn_like(goal_tokens) * self.noise_std
+
+        # Normalize embeddings
+        if self.normalize:
+            video_tokens = F.normalize(video_tokens, dim=-1)
+            goal_tokens = F.normalize(goal_tokens, dim=-1)
+
+        return {
+            'video_tokens': video_tokens,
+            'goal_tokens': goal_tokens,
+            'proprio': proprio,
+            'actions': actions,
+            'weights': weights,
+        }
+
+    def set_training(self, training: bool):
+        """Toggle training mode."""
+        self.training = training
+
+
 class RobustEmbeddingDataset(Dataset):
     """
     Wrapper dataset that adds noise and normalization to embeddings.

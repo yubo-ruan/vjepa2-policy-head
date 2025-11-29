@@ -106,6 +106,7 @@ class Trainer:
         self,
         pred_actions: torch.Tensor,
         target_actions: torch.Tensor,
+        sample_weights: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Compute training loss using configured loss function.
@@ -113,7 +114,15 @@ class Trainer:
         With weighted loss:
         - 3x weight on first 10 timesteps (reduces start error)
         - 5x weight on gripper transitions (improves timing)
+
+        Args:
+            pred_actions: (B, T, D) predicted actions
+            target_actions: (B, T, D) ground truth actions
+            sample_weights: (B, T) optional per-timestep weights from dataset
         """
+        # Check if loss function supports sample_weights
+        if sample_weights is not None and self.loss_type == "gripper_balanced":
+            return self.loss_fn(pred_actions, target_actions, sample_weights)
         return self.loss_fn(pred_actions, target_actions)
 
     def warmup_lr(self, epoch: int, warmup_epochs: int):
@@ -134,6 +143,7 @@ class Trainer:
 
         for batch in pbar:
             # Move to device
+            sample_weights = None
             if self.use_precomputed:
                 # Check if using spatial tokens or pooled embeddings
                 if 'video_tokens' in batch:
@@ -142,6 +152,10 @@ class Trainer:
                     goal_tokens = batch['goal_tokens'].to(self.device)
                     proprio = batch['proprio'].to(self.device)
                     target_actions = batch['actions'].to(self.device)
+
+                    # Get sample weights if available (from GripperFocusedSpatialDataset)
+                    if 'weights' in batch:
+                        sample_weights = batch['weights'].to(self.device)
 
                     pred_actions = self.model.forward_with_precomputed(
                         video_tokens, goal_tokens, proprio
@@ -166,8 +180,8 @@ class Trainer:
                 # Forward pass
                 pred_actions = self.model(video, goal, proprio)
 
-            # Compute loss
-            losses = self.compute_loss(pred_actions, target_actions)
+            # Compute loss (with sample weights if available)
+            losses = self.compute_loss(pred_actions, target_actions, sample_weights)
             loss = losses['loss']
 
             # Backward pass
