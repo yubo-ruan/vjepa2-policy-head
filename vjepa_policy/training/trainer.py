@@ -119,15 +119,28 @@ class Trainer:
         for batch in pbar:
             # Move to device
             if self.use_precomputed:
-                current_emb = batch['current_emb'].to(self.device)
-                goal_emb = batch['goal_emb'].to(self.device)
-                proprio = batch['proprio'].to(self.device)
-                target_actions = batch['actions'].to(self.device)
+                # Check if using spatial tokens or pooled embeddings
+                if 'video_tokens' in batch:
+                    # Spatial tokens mode: (B, 64, 1408)
+                    video_tokens = batch['video_tokens'].to(self.device)
+                    goal_tokens = batch['goal_tokens'].to(self.device)
+                    proprio = batch['proprio'].to(self.device)
+                    target_actions = batch['actions'].to(self.device)
 
-                # Forward with precomputed embeddings
-                pred_actions = self.model.forward_with_precomputed(
-                    current_emb, goal_emb, proprio
-                )
+                    pred_actions = self.model.forward_with_precomputed(
+                        video_tokens, goal_tokens, proprio
+                    )
+                else:
+                    # Pooled embeddings mode: (B, 1408)
+                    current_emb = batch['current_emb'].to(self.device)
+                    goal_emb = batch['goal_emb'].to(self.device)
+                    proprio = batch['proprio'].to(self.device)
+                    target_actions = batch['actions'].to(self.device)
+
+                    # Forward with precomputed embeddings
+                    pred_actions = self.model.forward_with_precomputed(
+                        current_emb, goal_emb, proprio
+                    )
             else:
                 video = batch['video'].to(self.device)
                 goal = batch['goal'].to(self.device)
@@ -186,14 +199,25 @@ class Trainer:
 
         for batch in tqdm(self.val_loader, desc="Validating"):
             if self.use_precomputed:
-                current_emb = batch['current_emb'].to(self.device)
-                goal_emb = batch['goal_emb'].to(self.device)
-                proprio = batch['proprio'].to(self.device)
-                target_actions = batch['actions'].to(self.device)
+                # Check if using spatial tokens or pooled embeddings
+                if 'video_tokens' in batch:
+                    video_tokens = batch['video_tokens'].to(self.device)
+                    goal_tokens = batch['goal_tokens'].to(self.device)
+                    proprio = batch['proprio'].to(self.device)
+                    target_actions = batch['actions'].to(self.device)
 
-                pred_actions = self.model.forward_with_precomputed(
-                    current_emb, goal_emb, proprio
-                )
+                    pred_actions = self.model.forward_with_precomputed(
+                        video_tokens, goal_tokens, proprio
+                    )
+                else:
+                    current_emb = batch['current_emb'].to(self.device)
+                    goal_emb = batch['goal_emb'].to(self.device)
+                    proprio = batch['proprio'].to(self.device)
+                    target_actions = batch['actions'].to(self.device)
+
+                    pred_actions = self.model.forward_with_precomputed(
+                        current_emb, goal_emb, proprio
+                    )
             else:
                 video = batch['video'].to(self.device)
                 goal = batch['goal'].to(self.device)

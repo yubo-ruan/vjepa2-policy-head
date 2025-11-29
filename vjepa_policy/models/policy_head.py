@@ -180,6 +180,144 @@ class PolicyHead(nn.Module):
         return actions
 
 
+class PolicyHeadSpatial(nn.Module):
+    """
+    Policy head for spatial token input (64 tokens per modality).
+
+    Instead of mean-pooled single embedding per modality, this uses
+    64 spatial tokens from AdaptiveAvgPool2d((8,8)) downsampling.
+
+    Context tokens: 64 (video) + 64 (goal) + 4 (proprio) = 132 tokens
+    """
+
+    def __init__(
+        self,
+        vision_dim: int = 1408,       # V-JEPA 2 ViT-Giant embedding dim
+        proprio_dim: int = 256,        # Encoded proprio dim
+        hidden_dim: int = 512,         # Transformer hidden dim
+        n_heads: int = 8,
+        n_layers: int = 4,
+        action_dim: int = 7,
+        chunk_size: int = 50,
+        dropout: float = 0.1,
+        n_spatial_tokens: int = 64,    # Number of spatial tokens (8x8)
+        n_proprio_tokens: int = 4,     # Number of proprio tokens
+    ):
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.action_dim = action_dim
+        self.chunk_size = chunk_size
+        self.n_spatial_tokens = n_spatial_tokens
+        self.n_proprio_tokens = n_proprio_tokens
+
+        # Project spatial tokens from vision_dim to hidden_dim
+        self.video_proj = nn.Sequential(
+            nn.Linear(vision_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        self.goal_proj = nn.Sequential(
+            nn.Linear(vision_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        # Proprio projection: (B, proprio_dim) -> (B, n_proprio_tokens, hidden_dim)
+        self.proprio_proj = nn.Sequential(
+            nn.Linear(proprio_dim, hidden_dim * n_proprio_tokens),
+            nn.LayerNorm(hidden_dim * n_proprio_tokens),
+            nn.GELU(),
+        )
+
+        # Learnable modality embeddings (added to each token)
+        self.video_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.goal_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.proprio_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+
+        # Learnable spatial position embeddings for video and goal
+        self.spatial_pos = nn.Parameter(torch.randn(1, n_spatial_tokens, hidden_dim) * 0.02)
+
+        # Learnable action queries
+        self.action_queries = nn.Parameter(torch.randn(chunk_size, hidden_dim) * 0.02)
+        self.pos_encoding = PositionalEncoding(hidden_dim, max_len=chunk_size)
+
+        # Transformer decoder
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=hidden_dim,
+            nhead=n_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
+
+        # Action output head
+        self.action_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, action_dim),
+        )
+
+        # Learnable output scale
+        self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+
+    def forward(
+        self,
+        video_tokens: torch.Tensor,
+        goal_tokens: torch.Tensor,
+        proprio_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Args:
+            video_tokens: (B, 64, vision_dim) spatial video tokens
+            goal_tokens: (B, 64, vision_dim) spatial goal tokens
+            proprio_emb: (B, proprio_dim) encoded proprioception
+
+        Returns:
+            actions: (B, chunk_size, action_dim) action chunk
+        """
+        B = video_tokens.shape[0]
+
+        # 1. Project spatial tokens: (B, 64, vision_dim) -> (B, 64, hidden_dim)
+        video_proj = self.video_proj(video_tokens) + self.video_emb + self.spatial_pos
+        goal_proj = self.goal_proj(goal_tokens) + self.goal_emb + self.spatial_pos
+
+        # 2. Project proprio: (B, proprio_dim) -> (B, n_proprio_tokens, hidden_dim)
+        proprio_proj = self.proprio_proj(proprio_emb).view(B, self.n_proprio_tokens, self.hidden_dim)
+        proprio_proj = proprio_proj + self.proprio_emb
+
+        # 3. Concatenate all context tokens: 64 + 64 + 4 = 132 tokens
+        context = torch.cat([video_proj, goal_proj, proprio_proj], dim=1)
+
+        # 4. Prepare action queries
+        queries = self.action_queries.unsqueeze(0).expand(B, -1, -1)
+        queries = self.pos_encoding(queries)
+
+        # 5. Transformer decoder
+        action_features = self.transformer(tgt=queries, memory=context)
+
+        # 6. Predict actions with scaled tanh
+        raw_actions = self.action_head(action_features)
+        actions = torch.tanh(raw_actions * self.output_scale)
+
+        return actions
+
+
 class PolicyHeadWithPatches(nn.Module):
     """
     Alternative policy head that can use patch tokens directly.

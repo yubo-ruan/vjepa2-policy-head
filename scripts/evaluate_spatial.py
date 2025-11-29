@@ -1,5 +1,7 @@
 """
-Evaluation script for V-JEPA 2 Policy on LIBERO benchmark
+Evaluation script for V-JEPA 2 Policy with SPATIAL tokens on LIBERO benchmark
+
+Uses VJEPA2PolicySpatial model with 64 spatial tokens per modality.
 """
 
 import argparse
@@ -10,8 +12,8 @@ import sys
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from vjepa_policy.models.full_model import VJEPA2Policy
-from vjepa_policy.utils.evaluation import create_evaluator, VALID_SUITES
+from vjepa_policy.models.full_model import VJEPA2PolicySpatial
+from vjepa_policy.utils.evaluation import LIBEROEvaluatorSpatial, VALID_SUITES
 
 
 def load_config(config_path: str) -> dict:
@@ -28,21 +30,24 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Create model
-    print("Creating model...")
-    model = VJEPA2Policy(
+    # Get spatial config
+    n_spatial_tokens = config.get('spatial', {}).get('n_tokens', 64)
+
+    # Create spatial model
+    print("Creating VJEPA2PolicySpatial model...")
+    model = VJEPA2PolicySpatial(
         vjepa2_model_path=args.model_path or config['vjepa2']['model_path'],
         vjepa2_model_name=config['vjepa2']['model_name'],
         vjepa2_freeze=True,
         vjepa2_num_frames=config['vjepa2']['num_frames'],
-        vjepa2_use_attentive_pool=config['vjepa2'].get('use_attentive_pool', True),
         proprio_dim=config['proprio']['dim'],
         proprio_history=config['proprio']['history_len'],
         proprio_output_dim=config['proprio'].get('output_dim', 256),
         policy_hidden_dim=config['policy']['hidden_dim'],
         policy_n_heads=config['policy']['n_heads'],
         policy_n_layers=config['policy']['n_layers'],
-        policy_n_context_tokens=config['policy'].get('n_context_tokens', 4),
+        n_spatial_tokens=n_spatial_tokens,
+        n_proprio_tokens=config['policy'].get('n_context_tokens', 4),
         action_dim=config['policy']['action_dim'],
         chunk_size=config['policy']['chunk_size'],
         device=device,
@@ -55,10 +60,9 @@ def main(args):
     model.eval()
 
     # Create evaluator
-    # Check if robust embeddings normalization was used during training
     normalize_embeddings = config.get('robust_embeddings', {}).get('normalize', True)
 
-    evaluator = create_evaluator(
+    evaluator = LIBEROEvaluatorSpatial(
         model=model,
         device=device,
         video_len=config['vjepa2']['num_frames'],
@@ -68,6 +72,7 @@ def main(args):
         max_episode_steps=config['evaluation']['max_episode_steps'],
         image_size=config['vjepa2']['image_size'],
         normalize_embeddings=normalize_embeddings,
+        n_spatial_tokens=n_spatial_tokens,
     )
 
     # Run evaluation
@@ -97,15 +102,15 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate V-JEPA 2 Policy on LIBERO")
+    parser = argparse.ArgumentParser(description="Evaluate V-JEPA 2 Policy (Spatial) on LIBERO")
 
     parser.add_argument("--checkpoint", type=str, required=True,
                         help="Path to model checkpoint")
-    parser.add_argument("--config", type=str, default="configs/default.yaml",
+    parser.add_argument("--config", type=str, default="configs/spatial.yaml",
                         help="Path to config file")
     parser.add_argument("--model_path", type=str, default=None,
                         help="Path to V-JEPA 2 weights (overrides config)")
-    parser.add_argument("--suite", type=str, default="libero_object",
+    parser.add_argument("--suite", type=str, default="libero_spatial",
                         choices=['libero_object', 'libero_spatial', 'libero_goal', 'libero_90', 'libero_10', 'all'],
                         help="Which LIBERO suite to evaluate")
     parser.add_argument("--n_episodes", type=int, default=20,

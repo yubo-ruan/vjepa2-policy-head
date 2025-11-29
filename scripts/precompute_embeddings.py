@@ -40,12 +40,13 @@ def precompute_embeddings(
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Load encoder
-    print(f"Loading V-JEPA 2 encoder...")
+    # IMPORTANT: Use mean pooling for reproducibility (AttentivePooler is randomly initialized)
+    print(f"Loading V-JEPA 2 encoder with mean pooling...")
     encoder = VJEPA2Encoder(
         model_path=model_path,
         model_name=model_name,
         freeze=True,
-        use_attentive_pool=True,
+        use_attentive_pool=False,  # Mean pooling for reproducible embeddings
         device=device,
     )
     encoder.eval()

@@ -1,0 +1,93 @@
+# V-JEPA 2 Policy Configuration - SPATIAL TOKENS
+#
+# This config is for the spatial token architecture:
+# - Preserves 64 spatial tokens instead of mean-pooling to 1
+# - Uses PolicyHeadSpatial with 132 context tokens (64+64+4)
+# - Trained with static frame augmentation for better generalization
+
+# V-JEPA 2 Encoder
+vjepa2:
+  model_path: "/workspace/models/vjepa2-ac-vitg.pt"
+  model_name: "vjepa2_vitg"
+  freeze: true
+  num_frames: 16
+  image_size: 256
+  # NOT USED in spatial mode (we use encode_video_spatial instead)
+  use_attentive_pool: false
+
+# Spatial token configuration
+spatial:
+  # Enable spatial token mode (use VJEPA2PolicySpatial)
+  enabled: true
+  # Number of spatial tokens (8x8 = 64)
+  n_tokens: 64
+  # Target spatial size for downsampling (8x8 grid)
+  target_size: 8
+
+# Proprioception Encoder
+proprio:
+  dim: 15
+  history_len: 5
+  output_dim: 256
+
+# Policy Head (Spatial version)
+policy:
+  hidden_dim: 512
+  n_heads: 8
+  n_layers: 4
+  # Number of proprio tokens (total context = 64 + 64 + 4 = 132)
+  n_context_tokens: 4
+  action_dim: 7
+  chunk_size: 50
+  dropout: 0.1
+
+# Training
+training:
+  batch_size: 32
+  learning_rate: 0.0001
+  weight_decay: 0.00001
+  epochs: 100
+  warmup_epochs: 5
+  grad_clip: 1.0
+  seed: 42
+
+# Static Frame Augmentation (for precomputation)
+augmentation:
+  # Probability of fully static video (first frame repeated)
+  static_prob: 0.20
+  # Probability of beginning-biased sampling
+  beginning_prob: 0.30
+  # Max frame for beginning sampling
+  max_beginning_frame: 30
+
+# Robust Embeddings (for training)
+robust_embeddings:
+  enabled: true
+  # Noise to add during training
+  noise_std: 0.05
+  # L2 normalize embeddings
+  normalize: true
+
+# Evaluation
+evaluation:
+  execute_steps: 10
+  max_episode_steps: 300
+  n_episodes_per_task: 20
+  suites:
+    - "libero_object"
+    - "libero_spatial"
+    - "libero_goal"
+
+# Data
+data:
+  libero_path: "/workspace/data/libero"
+  suite: "libero_spatial"
+  train_ratio: 0.9
+  sample_stride: 5
+
+# Logging
+logging:
+  wandb_project: "vjepa2-policy-spatial"
+  log_every: 10
+  save_every: 1000
+  checkpoint_dir: "/workspace/checkpoints_spatial"

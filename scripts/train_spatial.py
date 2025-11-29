@@ -1,11 +1,17 @@
 """
-Fast training script using pre-computed V-JEPA 2 embeddings.
+Training script for V-JEPA 2 Policy with SPATIAL tokens.
+
+Uses pre-computed spatial embeddings (64, 1408) instead of mean-pooled (1408,).
+This preserves spatial structure for better policy learning.
 
 Usage:
-1. First run: python scripts/precompute_embeddings.py --suite libero_spatial
-2. Then run: python scripts/train_fast.py --suite libero_spatial
+1. First run: python scripts/precompute_spatial_embeddings.py --suite libero_spatial
+2. Then run: python scripts/train_spatial.py --suite libero_spatial
 
-This is ~30x faster than training with raw video input.
+Key differences from train_fast.py:
+- Uses VJEPA2PolicySpatial model (with PolicyHeadSpatial)
+- Loads spatial tokens (64, 1408) instead of pooled embeddings
+- 132 context tokens: 64 video + 64 goal + 4 proprio
 """
 
 import argparse
@@ -16,8 +22,11 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from vjepa_policy.models.full_model import VJEPA2Policy
-from vjepa_policy.data.libero_dataset import PrecomputedEmbeddingDataset, RobustEmbeddingDataset
+from vjepa_policy.models.full_model import VJEPA2PolicySpatial
+from vjepa_policy.data.libero_dataset import (
+    PrecomputedSpatialEmbeddingDataset,
+    RobustSpatialEmbeddingDataset,
+)
 from vjepa_policy.training.trainer import Trainer
 from torch.utils.data import DataLoader
 
@@ -55,11 +64,11 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    # Check embeddings exist
-    embedding_dir = Path(args.embedding_dir) / suite
+    # Check embeddings exist (spatial directory with _spatial suffix)
+    embedding_dir = Path(args.embedding_dir) / f"{suite}_spatial"
     if not embedding_dir.exists():
-        print(f"Error: Embeddings not found at {embedding_dir}")
-        print(f"Please run: python scripts/precompute_embeddings.py --suite {suite}")
+        print(f"Error: Spatial embeddings not found at {embedding_dir}")
+        print(f"Please run: python scripts/precompute_spatial_embeddings.py --suite {suite}")
         return
 
     # Initialize wandb
@@ -68,31 +77,30 @@ def main(args):
         wandb.init(
             project=config['logging']['wandb_project'],
             config=config,
-            name=args.run_name or f"{suite}_fast",
+            name=args.run_name or f"{suite}_spatial",
         )
-
-    # Create model (skip V-JEPA 2 loading for speed, we only need policy head)
-    print("Creating model...")
 
     # Get embedding dimension from a sample
     sample_path = list((embedding_dir / "train").glob("*.pt"))[0]
     sample_data = torch.load(sample_path)
-    embed_dim = sample_data['video_emb'].shape[-1]
-    print(f"Detected embedding dimension: {embed_dim}")
+    n_tokens, embed_dim = sample_data['video_emb'].shape
+    print(f"Detected spatial tokens: ({n_tokens}, {embed_dim})")
 
-    model = VJEPA2Policy(
+    # Create spatial model
+    print("Creating VJEPA2PolicySpatial model...")
+    model = VJEPA2PolicySpatial(
         vjepa2_model_path=config['vjepa2']['model_path'],
         vjepa2_model_name=config['vjepa2']['model_name'],
         vjepa2_freeze=True,  # Always frozen with precomputed
         vjepa2_num_frames=config['vjepa2']['num_frames'],
-        vjepa2_use_attentive_pool=config['vjepa2'].get('use_attentive_pool', True),
         proprio_dim=config['proprio']['dim'],
         proprio_history=config['proprio']['history_len'],
         proprio_output_dim=config['proprio'].get('output_dim', 256),
         policy_hidden_dim=config['policy']['hidden_dim'],
         policy_n_heads=config['policy']['n_heads'],
         policy_n_layers=config['policy']['n_layers'],
-        policy_n_context_tokens=config['policy'].get('n_context_tokens', 4),
+        n_spatial_tokens=n_tokens,  # 64
+        n_proprio_tokens=config['policy'].get('n_context_tokens', 4),
         action_dim=config['policy']['action_dim'],
         chunk_size=config['policy']['chunk_size'],
         device=device,
@@ -105,7 +113,7 @@ def main(args):
         print(f"  {name}: {count / 1e6:.2f}M")
 
     # Create dataloaders
-    print("\nLoading pre-computed embeddings...")
+    print("\nLoading pre-computed spatial embeddings...")
 
     # Get robust embedding settings from config or use defaults
     noise_std = config.get('robust_embeddings', {}).get('noise_std', 0.05)
@@ -113,31 +121,31 @@ def main(args):
     use_robust = config.get('robust_embeddings', {}).get('enabled', True)
 
     if use_robust:
-        print(f"Using RobustEmbeddingDataset: noise_std={noise_std}, normalize={normalize_emb}")
+        print(f"Using RobustSpatialEmbeddingDataset: noise_std={noise_std}, normalize={normalize_emb}")
 
-    base_train_dataset = PrecomputedEmbeddingDataset(
+    base_train_dataset = PrecomputedSpatialEmbeddingDataset(
         embedding_dir=embedding_dir,
         split='train',
         train_ratio=config['data'].get('train_ratio', 0.9),
         seed=config['training'].get('seed', 42),
     )
 
-    base_val_dataset = PrecomputedEmbeddingDataset(
+    base_val_dataset = PrecomputedSpatialEmbeddingDataset(
         embedding_dir=embedding_dir,
         split='val',
         train_ratio=config['data'].get('train_ratio', 0.9),
         seed=config['training'].get('seed', 42),
     )
 
-    # Wrap with RobustEmbeddingDataset for noise and normalization
+    # Wrap with RobustSpatialEmbeddingDataset for noise and normalization
     if use_robust:
-        train_dataset = RobustEmbeddingDataset(
+        train_dataset = RobustSpatialEmbeddingDataset(
             base_train_dataset,
             noise_std=noise_std,
             normalize=normalize_emb,
             training=True,
         )
-        val_dataset = RobustEmbeddingDataset(
+        val_dataset = RobustSpatialEmbeddingDataset(
             base_val_dataset,
             noise_std=noise_std,
             normalize=normalize_emb,
@@ -180,7 +188,7 @@ def main(args):
         log_every=config['logging']['log_every'],
         save_dir=args.save_dir or config['logging']['checkpoint_dir'],
         use_wandb=use_wandb,
-        use_precomputed=True,  # Use precomputed embeddings
+        use_precomputed=True,  # Using precomputed spatial embeddings
         seed=config['training'].get('seed', 42),
     )
 
@@ -194,7 +202,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fast training with pre-computed embeddings")
+    parser = argparse.ArgumentParser(description="Train with pre-computed spatial embeddings")
 
     parser.add_argument("--config", type=str, default="configs/default.yaml",
                         help="Path to config file")
@@ -202,7 +210,7 @@ if __name__ == "__main__":
                         choices=['libero_object', 'libero_spatial', 'libero_goal', 'libero_90', 'libero_10'],
                         help="Override LIBERO suite")
     parser.add_argument("--embedding_dir", type=str, default="/workspace/data/embeddings",
-                        help="Directory with pre-computed embeddings")
+                        help="Directory with pre-computed spatial embeddings")
     parser.add_argument("--batch_size", type=int, default=None,
                         help="Override batch size")
     parser.add_argument("--epochs", type=int, default=None,

@@ -366,6 +366,176 @@ class PrecomputedEmbeddingDataset(Dataset):
         }
 
 
+class PrecomputedSpatialEmbeddingDataset(Dataset):
+    """
+    Dataset with pre-computed V-JEPA 2 spatial tokens (64, 1408).
+    For use with PolicyHeadSpatial model.
+
+    Expected directory structure:
+        embedding_dir/
+            train/
+                sample_000000.pt  # Contains video_emb: (64, 1408), goal_emb: (64, 1408)
+                ...
+            val/
+                sample_000000.pt
+                ...
+    """
+
+    def __init__(
+        self,
+        embedding_dir: str,
+        split: str = "train",
+        train_ratio: float = 0.9,
+        seed: int = 42,
+    ):
+        self.embedding_dir = Path(embedding_dir)
+        self.split = split
+
+        # Check for split subdirectory
+        split_dir = self.embedding_dir / split
+        if split_dir.exists():
+            self.files = sorted(split_dir.glob("*.pt"))
+        else:
+            all_files = sorted(self.embedding_dir.glob("*.pt"))
+            random.seed(seed)
+            shuffled = all_files.copy()
+            random.shuffle(shuffled)
+            n_train = int(len(shuffled) * train_ratio)
+
+            if split == 'train':
+                self.files = shuffled[:n_train]
+            else:
+                self.files = shuffled[n_train:]
+
+        print(f"[{split}] Loaded {len(self.files)} pre-computed spatial samples")
+
+    def __len__(self) -> int:
+        return len(self.files)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        data = torch.load(self.files[idx])
+
+        # Spatial tokens: (64, 1408)
+        video_tokens = data.get('video_emb', data.get('current_emb'))
+        goal_tokens = data.get('goal_emb')
+
+        return {
+            'video_tokens': video_tokens,
+            'goal_tokens': goal_tokens,
+            'proprio': data['proprio'],
+            'actions': data['actions'],
+        }
+
+
+class RobustSpatialEmbeddingDataset(Dataset):
+    """
+    Wrapper dataset that adds noise and normalization to spatial embeddings.
+
+    Same as RobustEmbeddingDataset but for spatial tokens (64, 1408).
+    """
+
+    def __init__(
+        self,
+        base_dataset: PrecomputedSpatialEmbeddingDataset,
+        noise_std: float = 0.05,
+        normalize: bool = True,
+        training: bool = True,
+    ):
+        self.base_dataset = base_dataset
+        self.noise_std = noise_std
+        self.normalize = normalize
+        self.training = training
+
+    def __len__(self) -> int:
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        sample = self.base_dataset[idx]
+
+        video_tokens = sample['video_tokens'].clone()
+        goal_tokens = sample['goal_tokens'].clone()
+
+        # Add noise during training only
+        if self.training and self.noise_std > 0:
+            video_tokens = video_tokens + torch.randn_like(video_tokens) * self.noise_std
+            goal_tokens = goal_tokens + torch.randn_like(goal_tokens) * self.noise_std
+
+        # Normalize each token to unit sphere
+        if self.normalize:
+            video_tokens = F.normalize(video_tokens, dim=-1)
+            goal_tokens = F.normalize(goal_tokens, dim=-1)
+
+        return {
+            'video_tokens': video_tokens,
+            'goal_tokens': goal_tokens,
+            'proprio': sample['proprio'],
+            'actions': sample['actions'],
+        }
+
+    def set_training(self, training: bool):
+        self.training = training
+
+
+class RobustEmbeddingDataset(Dataset):
+    """
+    Wrapper dataset that adds noise and normalization to embeddings.
+
+    This addresses the domain gap between pre-computed embeddings and
+    live simulation embeddings by:
+    1. Adding Gaussian noise to make the policy robust to embedding variations
+    2. Normalizing embeddings to unit sphere to reduce sensitivity to magnitude
+
+    Args:
+        base_dataset: PrecomputedEmbeddingDataset to wrap
+        noise_std: Standard deviation of Gaussian noise to add (default: 0.05)
+        normalize: Whether to L2-normalize embeddings (default: True)
+        training: Whether in training mode (noise only added during training)
+    """
+
+    def __init__(
+        self,
+        base_dataset: PrecomputedEmbeddingDataset,
+        noise_std: float = 0.05,
+        normalize: bool = True,
+        training: bool = True,
+    ):
+        self.base_dataset = base_dataset
+        self.noise_std = noise_std
+        self.normalize = normalize
+        self.training = training
+
+    def __len__(self) -> int:
+        return len(self.base_dataset)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        sample = self.base_dataset[idx]
+
+        # Clone embeddings to avoid modifying cached data
+        video_emb = sample['current_emb'].clone()
+        goal_emb = sample['goal_emb'].clone()
+
+        # Add noise during training only
+        if self.training and self.noise_std > 0:
+            video_emb = video_emb + torch.randn_like(video_emb) * self.noise_std
+            goal_emb = goal_emb + torch.randn_like(goal_emb) * self.noise_std
+
+        # Normalize to unit sphere
+        if self.normalize:
+            video_emb = F.normalize(video_emb, dim=-1)
+            goal_emb = F.normalize(goal_emb, dim=-1)
+
+        return {
+            'current_emb': video_emb,
+            'goal_emb': goal_emb,
+            'proprio': sample['proprio'],
+            'actions': sample['actions'],
+        }
+
+    def set_training(self, training: bool):
+        """Toggle training mode (controls noise addition)"""
+        self.training = training
+
+
 def create_dataloader(
     data_dir: str,
     suite: str = "libero_object",

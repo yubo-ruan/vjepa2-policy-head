@@ -13,7 +13,8 @@ vjepa2:
   # Image size (256 for ViT-G)
   image_size: 256
   # Use AttentivePooler for aggregation
-  use_attentive_pool: true
+  # IMPORTANT: Set to false for reproducible embeddings (pooler is randomly initialized)
+  use_attentive_pool: false
 
 # Proprioception Encoder
 proprio:

@@ -10,7 +10,7 @@ from typing import Dict, Optional, List
 
 from .vjepa2_encoder import VJEPA2Encoder
 from .proprio_encoder import ProprioEncoder
-from .policy_head import PolicyHead
+from .policy_head import PolicyHead, PolicyHeadSpatial
 
 
 class VJEPA2Policy(nn.Module):
@@ -142,6 +142,160 @@ class VJEPA2Policy(nn.Module):
         # Policy head
         params.extend(self.policy_head.parameters())
 
+        return params
+
+    def count_parameters(self) -> Dict[str, int]:
+        """Count parameters by component"""
+        vjepa2_total = sum(p.numel() for p in self.vjepa2.parameters())
+        vjepa2_trainable = sum(p.numel() for p in self.vjepa2.get_trainable_params())
+        proprio_params = sum(p.numel() for p in self.proprio_encoder.parameters())
+        policy_params = sum(p.numel() for p in self.policy_head.parameters())
+        trainable_params = sum(p.numel() for p in self.get_trainable_params())
+
+        return {
+            'vjepa2_total': vjepa2_total,
+            'vjepa2_trainable': vjepa2_trainable,
+            'proprio_encoder': proprio_params,
+            'policy_head': policy_params,
+            'trainable': trainable_params,
+            'total': vjepa2_total + proprio_params + policy_params,
+        }
+
+
+class VJEPA2PolicySpatial(nn.Module):
+    """
+    V-JEPA 2 Policy model with spatial tokens (no pooling).
+
+    Instead of mean-pooling all patch tokens to 1 embedding,
+    this preserves 64 spatial tokens per modality for richer context.
+
+    Components:
+    - V-JEPA 2 encoder: Extracts spatial tokens (64, 1408)
+    - Proprio encoder: Encodes proprioception history
+    - PolicyHeadSpatial: Uses 132 context tokens (64+64+4)
+    """
+
+    def __init__(
+        self,
+        # V-JEPA 2 config
+        vjepa2_model_path: Optional[str] = "/workspace/models/vjepa2-ac-vitg.pt",
+        vjepa2_model_name: str = "vjepa2_vitg",
+        vjepa2_freeze: bool = True,
+        vjepa2_num_frames: int = 16,
+        # Proprio config
+        proprio_dim: int = 15,
+        proprio_history: int = 5,
+        proprio_output_dim: int = 256,
+        # Policy head config
+        policy_hidden_dim: int = 512,
+        policy_n_heads: int = 8,
+        policy_n_layers: int = 4,
+        n_spatial_tokens: int = 64,
+        n_proprio_tokens: int = 4,
+        # Action config
+        action_dim: int = 7,
+        chunk_size: int = 50,
+        # Device
+        device: str = "cuda",
+    ):
+        super().__init__()
+
+        self.device = device
+        self.chunk_size = chunk_size
+        self.action_dim = action_dim
+        self.n_spatial_tokens = n_spatial_tokens
+
+        # V-JEPA 2 encoder (don't use attentive pool, we'll use spatial encoding)
+        self.vjepa2 = VJEPA2Encoder(
+            model_path=vjepa2_model_path,
+            model_name=vjepa2_model_name,
+            freeze=vjepa2_freeze,
+            device=device,
+            num_frames=vjepa2_num_frames,
+            use_attentive_pool=False,  # We use spatial tokens instead
+        )
+        vision_dim = self.vjepa2.embed_dim  # 1408 for ViT-Giant
+
+        # Proprio encoder
+        self.proprio_encoder = ProprioEncoder(
+            proprio_dim=proprio_dim,
+            history_len=proprio_history,
+            output_dim=proprio_output_dim,
+        )
+
+        # Policy head for spatial tokens
+        self.policy_head = PolicyHeadSpatial(
+            vision_dim=vision_dim,
+            proprio_dim=proprio_output_dim,
+            hidden_dim=policy_hidden_dim,
+            n_heads=policy_n_heads,
+            n_layers=policy_n_layers,
+            action_dim=action_dim,
+            chunk_size=chunk_size,
+            n_spatial_tokens=n_spatial_tokens,
+            n_proprio_tokens=n_proprio_tokens,
+        )
+
+        self.to(device)
+
+    def forward(
+        self,
+        video: torch.Tensor,
+        goal_image: torch.Tensor,
+        proprio: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Full forward pass with spatial tokens.
+
+        Args:
+            video: (B, T, C, H, W) or (B, C, T, H, W) video frames
+            goal_image: (B, C, H, W) goal image
+            proprio: (B, history_len, proprio_dim) proprio history
+
+        Returns:
+            actions: (B, chunk_size, action_dim) predicted actions
+        """
+        # Encode video to spatial tokens: (B, 64, 1408)
+        video_tokens = self.vjepa2.encode_video_spatial(video)
+
+        # Encode goal to spatial tokens: (B, 64, 1408)
+        goal_tokens = self.vjepa2.encode_image_spatial(goal_image)
+
+        # Encode proprio
+        proprio_emb = self.proprio_encoder(proprio)
+
+        # Policy forward with spatial tokens
+        actions = self.policy_head(video_tokens, goal_tokens, proprio_emb)
+
+        return actions
+
+    def forward_with_precomputed(
+        self,
+        video_tokens: torch.Tensor,
+        goal_tokens: torch.Tensor,
+        proprio: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Forward pass with pre-computed spatial tokens.
+
+        Args:
+            video_tokens: (B, 64, 1408) precomputed video spatial tokens
+            goal_tokens: (B, 64, 1408) precomputed goal spatial tokens
+            proprio: (B, history_len, proprio_dim) proprio history
+
+        Returns:
+            actions: (B, chunk_size, action_dim)
+        """
+        proprio_emb = self.proprio_encoder(proprio)
+        actions = self.policy_head(video_tokens, goal_tokens, proprio_emb)
+        return actions
+
+    def get_trainable_params(self) -> List[nn.Parameter]:
+        """Get only trainable parameters"""
+        params = []
+        params.extend(self.vjepa2.get_trainable_params())
+        params.extend(self.proprio_encoder.parameters())
+        params.extend(self.policy_head.parameters())
         return params
 
     def count_parameters(self) -> Dict[str, int]:

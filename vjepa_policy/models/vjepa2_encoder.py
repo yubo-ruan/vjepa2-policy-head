@@ -306,6 +306,72 @@ class VJEPA2Encoder(nn.Module):
         video = image.unsqueeze(2).repeat(1, 1, 2, 1, 1)
         return self.encode_video(video)
 
+    def encode_video_spatial(self, video: torch.Tensor, target_spatial: int = 8) -> torch.Tensor:
+        """
+        Encode video to spatial tokens (preserving spatial structure).
+
+        Instead of pooling all tokens to 1, downsample spatially to preserve
+        spatial information. This helps with static frame generalization.
+
+        Args:
+            video: (B, C, T, H, W) video tensor, values in [0, 1]
+                   OR (B, T, C, H, W) - will be permuted automatically
+            target_spatial: Target spatial resolution (8 -> 64 tokens)
+
+        Returns:
+            spatial_tokens: (B, target_spatial^2, embed_dim) = (B, 64, 1408)
+        """
+        # Handle both input formats
+        if video.dim() == 5:
+            B, dim2, dim3, H, W = video.shape
+            if dim3 == 3 and dim2 != 3:  # (B, T, C, H, W)
+                video = video.permute(0, 2, 1, 3, 4)  # -> (B, C, T, H, W)
+
+        # Get patch tokens: (B, N, D) where N = T/2 * H/16 * W/16
+        patches = self.encode_patches(video)
+        B, N, D = patches.shape
+
+        # Compute spatial dimensions
+        # For 16 frames, 256x256: N = 8 * 16 * 16 = 2048 (temporal * spatial)
+        # For 16 frames: temporal_size = 16/2 = 8
+        # spatial_size = sqrt(N / temporal_size) = sqrt(2048/8) = 16
+        temporal_size = self.num_frames // 2  # tubelet_size = 2
+        spatial_total = N // temporal_size
+        spatial_size = int(spatial_total ** 0.5)  # Should be 16 for 256x256
+
+        # Reshape to (B, T, H_spatial, W_spatial, D)
+        patches = patches.view(B, temporal_size, spatial_size, spatial_size, D)
+
+        # Average over temporal dimension: (B, H_spatial, W_spatial, D)
+        patches = patches.mean(dim=1)
+
+        # Rearrange for spatial pooling: (B, D, H, W)
+        patches = patches.permute(0, 3, 1, 2)
+
+        # Spatial downsampling: (B, D, 8, 8)
+        pool = nn.AdaptiveAvgPool2d((target_spatial, target_spatial))
+        patches = pool(patches)
+
+        # Reshape to (B, 64, D)
+        patches = patches.permute(0, 2, 3, 1).reshape(B, target_spatial * target_spatial, D)
+
+        return patches
+
+    def encode_image_spatial(self, image: torch.Tensor, target_spatial: int = 8) -> torch.Tensor:
+        """
+        Encode single image to spatial tokens.
+
+        Args:
+            image: (B, C, H, W) image tensor, values in [0, 1]
+            target_spatial: Target spatial resolution (8 -> 64 tokens)
+
+        Returns:
+            spatial_tokens: (B, target_spatial^2, embed_dim) = (B, 64, 1408)
+        """
+        # Expand to video format: (B, C, H, W) -> (B, C, 2, H, W)
+        video = image.unsqueeze(2).repeat(1, 1, 2, 1, 1)
+        return self.encode_video_spatial(video, target_spatial)
+
     def forward(
         self,
         x: torch.Tensor,
