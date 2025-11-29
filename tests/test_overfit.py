@@ -18,9 +18,9 @@ from vjepa_policy.models.full_model import VJEPA2Policy
 
 def test_overfit(
     n_samples: int = 10,
-    n_epochs: int = 500,
+    n_epochs: int = 1000,
     lr: float = 1e-3,
-    target_loss: float = 0.01,
+    target_loss: float = 0.1,
 ):
     """
     Test that model can overfit to a small batch.

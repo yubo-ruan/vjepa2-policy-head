@@ -105,14 +105,16 @@ class PolicyHead(nn.Module):
         )
         self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
 
-        # Action output head
+        # Action output head - use smaller final layer to prevent tanh saturation
         self.action_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, action_dim),
-            nn.Tanh(),  # Bound actions to [-1, 1]
         )
+
+        # Learnable output scale - starts small to prevent tanh saturation
+        self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
 
         # Initialize weights
         self._init_weights()
@@ -171,8 +173,9 @@ class PolicyHead(nn.Module):
             memory=context,   # (B, 3 * n_context_tokens, hidden_dim)
         )
 
-        # 6. Predict actions
-        actions = self.action_head(action_features)  # (B, chunk_size, action_dim)
+        # 6. Predict actions with scaled tanh to prevent saturation
+        raw_actions = self.action_head(action_features)  # (B, chunk_size, action_dim)
+        actions = torch.tanh(raw_actions * self.output_scale)
 
         return actions
 
