@@ -33,6 +33,8 @@ def main(args):
     config = load_config(args.config)
 
     # Override with command line args
+    if args.suite:
+        config['data']['suite'] = args.suite
     if args.batch_size:
         config['training']['batch_size'] = args.batch_size
     if args.epochs:
@@ -134,6 +136,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--config", type=str, default="configs/default.yaml",
                         help="Path to config file")
+    parser.add_argument("--suite", type=str, default=None,
+                        choices=['libero_object', 'libero_spatial', 'libero_goal', 'libero_90', 'libero_10'],
+                        help="Override LIBERO suite")
     parser.add_argument("--batch_size", type=int, default=None,
                         help="Override batch size")
     parser.add_argument("--epochs", type=int, default=None,

@@ -44,8 +44,8 @@ policy:
 # Training
 training:
   batch_size: 32
-  learning_rate: 1e-4
-  weight_decay: 1e-5
+  learning_rate: 0.0001
+  weight_decay: 0.00001
   epochs: 100
   warmup_epochs: 5
   grad_clip: 1.0
