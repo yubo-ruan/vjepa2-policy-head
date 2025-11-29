@@ -292,9 +292,17 @@ class LIBEROEvaluator:
                 print(f"  Step {step}: reward={reward:.3f}, total={total_reward:.3f}")
                 print(f"    Action: {action[:3]} (pos) {action[3:6]} (rot) {action[6]:.2f} (grip)")
 
-            # Check success
-            if done or info.get('success', False):
-                success = info.get('success', False)
+            # Check success - LIBERO doesn't populate info['success'], use _check_success()
+            if done:
+                # First try info dict (some wrappers add it)
+                if info.get('success', False):
+                    success = True
+                # Then try direct method call (LIBERO native)
+                elif hasattr(env.env, '_check_success'):
+                    success = env.env._check_success()
+                # Finally check if reward indicates success
+                elif reward > 0.9:
+                    success = True
                 break
 
         return {
@@ -643,8 +651,17 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
             if verbose and step % 50 == 0:
                 print(f"  Step {step}: reward={reward:.3f}, total={total_reward:.3f}")
 
-            if done or info.get('success', False):
-                success = info.get('success', False)
+            # Check success - LIBERO doesn't populate info['success'], use _check_success()
+            if done:
+                # First try info dict (some wrappers add it)
+                if info.get('success', False):
+                    success = True
+                # Then try direct method call (LIBERO native)
+                elif hasattr(env.env, '_check_success'):
+                    success = env.env._check_success()
+                # Finally check if reward indicates success
+                elif reward > 0.9:
+                    success = True
                 break
 
         return {
