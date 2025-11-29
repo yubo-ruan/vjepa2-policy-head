@@ -1,0 +1,52 @@
+# V-JEPA 2 Configuration
+vjepa2:
+  # Local path to model weights (preferred)
+  model_path: "/workspace/models/vjepa2_vitg"
+  # Model name (used if model_path not found)
+  model_name: "vjepa2_vitg"
+  freeze: true
+  video_frames: 16
+  image_size: 384
+
+# Proprioception Configuration  
+proprio:
+  dim: 23  # 3 (ee_pos) + 4 (ee_quat) + 2 (gripper) + 7 (joint_pos) + 7 (joint_vel)
+  history_len: 5
+
+# Policy Head Configuration
+policy:
+  hidden_dim: 256
+  n_heads: 8
+  n_layers: 4
+  action_dim: 7
+  chunk_size: 50
+  dropout: 0.1
+
+# Training Configuration
+training:
+  batch_size: 32
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  epochs: 100
+  warmup_epochs: 5
+  grad_clip: 1.0
+
+# Evaluation Configuration
+evaluation:
+  execute_steps: 10  # Execute 10 of 50 predicted actions
+  max_episode_steps: 300
+  n_episodes_per_task: 20
+
+# Data Configuration
+data:
+  libero_path: "/workspace/data/libero"
+  suite: "libero_object"
+  precompute_embeddings: true
+  precomputed_path: "/workspace/data/libero_embeddings"
+
+# Logging
+logging:
+  wandb_project: "vjepa2-policy"
+  log_every: 10
+  save_every: 1000
+  checkpoint_dir: "/workspace/checkpoints"
