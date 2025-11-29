@@ -283,6 +283,11 @@ class LIBEROEvaluator:
 
             # Execute action
             action = action_buffer.pop(0)
+
+            # FIX: Threshold gripper to binary (-1 or 1)
+            # This addresses high gripper error (~0.29) from model predictions
+            action[6] = 1.0 if action[6] > 0 else -1.0
+
             all_actions.append(action)
 
             obs, reward, done, info = env.step(action)
@@ -643,6 +648,11 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
                 action_buffer = list(action_chunk[:self.execute_steps])
 
             action = action_buffer.pop(0)
+
+            # FIX: Threshold gripper to binary (-1 or 1)
+            # This addresses high gripper error (~0.29) from model predictions
+            action[6] = 1.0 if action[6] > 0 else -1.0
+
             all_actions.append(action)
 
             obs, reward, done, info = env.step(action)

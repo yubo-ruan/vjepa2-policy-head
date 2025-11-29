@@ -122,8 +122,8 @@ A goal-conditioned robot manipulation policy using V-JEPA 2 as the visual encode
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `static_prob` | 0.20 | Fully static video (first frame repeated) |
-| `beginning_prob` | 0.30 | Sample from first 30 frames |
+| `static_prob` | 0.25 | Fully static video (first frame repeated) |
+| `beginning_prob` | 0.25 | Sample from first 30 frames |
 
 ### Evaluation Configuration
 
@@ -242,11 +242,85 @@ vjepa2-policy-head/
 └── README.md
 ```
 
+## Debug Scripts
+
+The `scripts/` directory includes diagnostic tools:
+
+| Script | Description |
+|--------|-------------|
+| `debug_gt_actions.py` | Replay ground truth actions in environment |
+| `debug_init_state.py` | Inspect demo HDF5 structure and initial states |
+| `debug_replay_with_state.py` | Replay demos with restored initial state |
+| `test_receding_horizon.py` | Compare different `execute_steps` values |
+| `test_action_robustness.py` | Compare predictions to GT and test noise tolerance |
+
 ## Known Issues
 
 1. **Success Detection**: LIBERO environments don't populate `info['success']`. The evaluation code uses `env.env._check_success()` as a workaround.
 
 2. **Generalization Gap**: The policy may achieve low validation loss but still fail on evaluation due to distribution shift between training trajectories and novel initial states.
+
+## Diagnostic Findings
+
+### Action Noise Tolerance
+Ground truth actions tolerate up to ~0.1 noise standard deviation while maintaining 100% success. At 0.2 noise, tasks fail.
+
+### Model Prediction Analysis
+- **Position errors**: ~0.27 mean (moderate, some timesteps within tolerance)
+- **Rotation errors**: ~0.05 mean (low, within tolerance)
+- **Gripper errors**: ~0.29 mean (high variance due to binary action)
+
+The model performs poorly at trajectory start (high position error ~0.5) and during gripper transitions. These critical moments cause task failure even with perfect actions elsewhere.
+
+### Receding Horizon
+Testing `execute_steps=1` vs `execute_steps=10` showed no improvement. The issue is not replanning frequency but rather fundamental prediction errors at critical phases.
+
+## Training Results
+
+### Latest Experiment (Spatial + Weighted Loss + Augmentation)
+
+**Configuration:**
+- Architecture: Spatial tokens (64 video + 64 goal + 4 proprio = 132 context tokens)
+- Data: 50% augmentation (25% static + 25% beginning-biased)
+- Loss: Weighted temporal (3x for first 10 timesteps, 5x for gripper transitions)
+- Training: 100 epochs, batch size 32, lr=1e-4
+
+**Training Metrics:**
+| Metric | Value |
+|--------|-------|
+| Best Val Loss | 0.1051 (epoch 48) |
+| Final Train Loss | 0.035 |
+| Final Val Loss | 0.107 |
+
+**Evaluation Results:**
+| Suite | Success Rate | Notes |
+|-------|--------------|-------|
+| libero_spatial (Task 0) | 0% (0/2) | Model struggles with pick-and-place |
+
+### Improvements Implemented
+
+1. **Weighted Temporal Loss** (`vjepa_policy/training/losses.py`)
+   - 3x weight on first 10 timesteps (addresses ~0.5 start error)
+   - 5x weight on gripper transitions (addresses ~1.99 transition error)
+
+2. **Static Frame Augmentation** (`scripts/precompute_spatial_embeddings.py`)
+   - 25% fully static videos (first frame repeated)
+   - 25% beginning-biased sampling (first 30 frames)
+   - Bridges train/eval distribution gap
+
+3. **Visualization Tools** (`scripts/visualize_policy.py`)
+   - GIF generation for VSCode viewing
+   - Vertical flip correction for simulation render
+
+## Future Improvements
+
+1. ~~**Data Augmentation**: Add color jitter, random crops, and perturbations during training~~ (Implemented: static frame augmentation)
+2. ~~**Temporal Weighting**: Weight critical timesteps (start, gripper changes) more heavily in loss~~ (Implemented: weighted loss)
+3. **Multi-Demo Training**: Train on more demonstrations per task for better coverage
+4. **State Matching**: Initialize evaluation from demo-like states to reduce distribution gap
+5. **Action Smoothing**: Apply temporal smoothing to predicted action chunks
+6. **Larger Policy Head**: Increase transformer capacity (more layers, larger hidden dim)
+7. **Different Encoder**: Try fine-tuning V-JEPA 2 or using a different visual encoder
 
 ## License
 

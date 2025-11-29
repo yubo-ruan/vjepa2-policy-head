@@ -175,7 +175,15 @@ def main(args):
     print(f"Train batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")
 
-    # Create trainer
+    # Get loss configuration
+    loss_config = config.get('loss', {})
+    loss_type = loss_config.get('type', 'weighted')
+    start_weight = loss_config.get('start_weight', 3.0)
+    start_timesteps = loss_config.get('start_timesteps', 10)
+    gripper_transition_weight = loss_config.get('gripper_transition_weight', 5.0)
+    gripper_dim = loss_config.get('gripper_dim', 6)
+
+    # Create trainer with weighted loss
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
@@ -190,6 +198,12 @@ def main(args):
         use_wandb=use_wandb,
         use_precomputed=True,  # Using precomputed spatial embeddings
         seed=config['training'].get('seed', 42),
+        # Loss configuration
+        loss_type=loss_type,
+        start_weight=start_weight,
+        start_timesteps=start_timesteps,
+        gripper_transition_weight=gripper_transition_weight,
+        gripper_dim=gripper_dim,
     )
 
     # Train

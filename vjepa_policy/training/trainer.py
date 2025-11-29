@@ -14,6 +14,8 @@ from pathlib import Path
 import random
 import numpy as np
 
+from .losses import WeightedActionLoss, L1ActionLoss, get_loss_fn
+
 # Optional wandb
 try:
     import wandb
@@ -51,6 +53,12 @@ class Trainer:
         use_wandb: bool = True,
         use_precomputed: bool = False,
         seed: int = 42,
+        # Loss configuration
+        loss_type: str = "weighted",
+        start_weight: float = 3.0,
+        start_timesteps: int = 10,
+        gripper_transition_weight: float = 5.0,
+        gripper_dim: int = 6,
     ):
         self.model = model
         self.train_loader = train_loader
@@ -67,6 +75,20 @@ class Trainer:
 
         # Set seed
         set_seed(seed)
+
+        # Loss function
+        self.loss_fn = get_loss_fn(
+            loss_type=loss_type,
+            start_weight=start_weight,
+            start_timesteps=start_timesteps,
+            gripper_transition_weight=gripper_transition_weight,
+            gripper_dim=gripper_dim,
+        )
+        self.loss_type = loss_type
+        print(f"Using loss: {loss_type}")
+        if loss_type == "weighted":
+            print(f"  start_weight: {start_weight}x for first {start_timesteps} timesteps")
+            print(f"  gripper_transition_weight: {gripper_transition_weight}x")
 
         # Optimizer (only trainable params)
         self.optimizer = torch.optim.AdamW(
@@ -86,19 +108,13 @@ class Trainer:
         target_actions: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """
-        Compute training loss.
+        Compute training loss using configured loss function.
 
-        Uses L1 loss (smoother than L2 for actions).
+        With weighted loss:
+        - 3x weight on first 10 timesteps (reduces start error)
+        - 5x weight on gripper transitions (improves timing)
         """
-        loss = F.l1_loss(pred_actions, target_actions)
-
-        # Per-dimension loss for debugging
-        loss_per_dim = F.l1_loss(pred_actions, target_actions, reduction='none').mean(dim=(0, 1))
-
-        return {
-            'loss': loss,
-            'loss_per_dim': loss_per_dim,
-        }
+        return self.loss_fn(pred_actions, target_actions)
 
     def warmup_lr(self, epoch: int, warmup_epochs: int):
         """Linear warmup for learning rate"""

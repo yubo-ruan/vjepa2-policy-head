@@ -34,19 +34,20 @@ class StaticFrameAugmentedDataset:
     """
     Wrapper that applies static frame augmentation to a base dataset.
 
-    Augmentation strategy:
-    - 30% chance: bias to beginning of episode (first 30 frames)
-    - 20% chance: fully static video (first frame repeated)
+    Augmentation strategy (50% total):
+    - 25% chance: fully static video (first frame repeated)
+    - 25% chance: bias to beginning of episode (first 30 frames)
     - 50% chance: normal sampling
 
-    This is applied during precomputation, not at training time.
+    This addresses high position error at trajectory start (0.5 vs 0.15 tolerance)
+    by ensuring training sees more static/beginning frames like evaluation does.
     """
 
     def __init__(
         self,
         base_dataset: LIBERODataset,
-        beginning_prob: float = 0.30,
-        static_prob: float = 0.20,
+        beginning_prob: float = 0.25,
+        static_prob: float = 0.25,
         max_beginning_frame: int = 30,
     ):
         self.base_dataset = base_dataset
@@ -184,8 +185,8 @@ def precompute_spatial_embeddings(
     train_ratio: float = 0.9,
     seed: int = 42,
     use_augmentation: bool = True,
-    static_prob: float = 0.20,
-    beginning_prob: float = 0.30,
+    static_prob: float = 0.25,
+    beginning_prob: float = 0.25,
 ):
     """Pre-compute V-JEPA 2 spatial embeddings for a dataset split."""
 
@@ -313,10 +314,10 @@ def main():
                         help="Random seed for reproducibility")
     parser.add_argument("--no_augmentation", action="store_true",
                         help="Disable static frame augmentation")
-    parser.add_argument("--static_prob", type=float, default=0.20,
-                        help="Probability of fully static video augmentation")
-    parser.add_argument("--beginning_prob", type=float, default=0.30,
-                        help="Probability of beginning-biased sampling")
+    parser.add_argument("--static_prob", type=float, default=0.25,
+                        help="Probability of fully static video augmentation (default: 0.25)")
+    parser.add_argument("--beginning_prob", type=float, default=0.25,
+                        help="Probability of beginning-biased sampling (default: 0.25)")
 
     args = parser.parse_args()
 

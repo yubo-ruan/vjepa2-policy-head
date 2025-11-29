@@ -52,13 +52,28 @@ training:
   seed: 42
 
 # Static Frame Augmentation (for precomputation)
+# Total 50% augmentation to address high start error (0.5 vs 0.15 tolerance)
 augmentation:
   # Probability of fully static video (first frame repeated)
-  static_prob: 0.20
+  static_prob: 0.25
   # Probability of beginning-biased sampling
-  beginning_prob: 0.30
+  beginning_prob: 0.25
   # Max frame for beginning sampling
   max_beginning_frame: 30
+
+# Loss function configuration
+loss:
+  # Use weighted loss to focus on critical timesteps
+  type: "weighted"
+  # Weight multiplier for first N timesteps (addresses 0.5 start error)
+  start_weight: 3.0
+  start_timesteps: 10
+  # Weight for gripper transitions (addresses up to 1.99 transition error)
+  gripper_transition_weight: 5.0
+  # Index of gripper in action vector (0-indexed)
+  gripper_dim: 6
+  # Min change to be considered a transition
+  transition_threshold: 0.5
 
 # Robust Embeddings (for training)
 robust_embeddings:
