@@ -10,8 +10,8 @@ import sys
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.models.full_model import VJEPA2Policy
-from src.utils.evaluation import create_evaluator, VALID_SUITES
+from vjepa_policy.models.full_model import VJEPA2Policy
+from vjepa_policy.utils.evaluation import create_evaluator, VALID_SUITES
 
 
 def load_config(config_path: str) -> dict:

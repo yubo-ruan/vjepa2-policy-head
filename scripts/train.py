@@ -10,9 +10,9 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.models.full_model import VJEPA2Policy
-from src.data.libero_dataset import create_dataloader
-from src.training.trainer import Trainer
+from vjepa_policy.models.full_model import VJEPA2Policy
+from vjepa_policy.data.libero_dataset import create_dataloader
+from vjepa_policy.training.trainer import Trainer
 
 # Optional wandb
 try:

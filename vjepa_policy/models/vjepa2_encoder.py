@@ -5,16 +5,29 @@ Uses the official V-JEPA 2 implementation from /workspace/vjepa/
 Loads from local checkpoint (encoder + AC predictor).
 """
 
-import torch
-import torch.nn as nn
-from pathlib import Path
-from typing import Optional, Tuple
 import sys
+from pathlib import Path
 
-# Add official V-JEPA 2 repo to path
+# CRITICAL: Add vjepa to path BEFORE any other imports
+# This must happen at module load time to ensure vjepa's src is found
 VJEPA_REPO_PATH = "/workspace/vjepa"
 if VJEPA_REPO_PATH not in sys.path:
     sys.path.insert(0, VJEPA_REPO_PATH)
+
+import torch
+import torch.nn as nn
+from typing import Optional, Tuple
+
+# Now import vjepa modules (they will be found in /workspace/vjepa/src/)
+from src.models import vision_transformer as vjepa_vit
+from src.models import ac_predictor as vjepa_ac
+from src.models import attentive_pooler as vjepa_pooler
+from src.hub import backbones as vjepa_backbones
+
+
+def _get_vjepa_modules():
+    """Return pre-imported vjepa modules"""
+    return vjepa_backbones, vjepa_vit, vjepa_ac, vjepa_pooler
 
 
 class VJEPA2Encoder(nn.Module):
@@ -69,6 +82,9 @@ class VJEPA2Encoder(nn.Module):
         self.img_size = config['img_size']
         self.embed_dim = config['embed_dim']
 
+        # Load V-JEPA modules
+        self._vjepa_modules = _get_vjepa_modules()
+
         # Load model
         self._load_model(model_path)
 
@@ -104,9 +120,16 @@ class VJEPA2Encoder(nn.Module):
 
     def _load_from_local(self, model_path: str):
         """Load from local checkpoint file"""
-        from src.hub.backbones import _make_vjepa2_ac_model, _clean_backbone_key
-        from src.models import vision_transformer as vit_encoder
-        from src.models import ac_predictor as vit_ac_predictor
+        vjepa_backbones, vit_encoder, vit_ac_predictor, _ = self._vjepa_modules
+
+        def _clean_backbone_key(state_dict):
+            """Clean backbone keys from state dict"""
+            for key, val in state_dict.copy().items():
+                _ = state_dict.pop(key)
+                key = key.replace("module.", "")
+                key = key.replace("backbone.", "")
+                state_dict[key] = val
+            return state_dict
 
         print(f"Loading V-JEPA 2 from local: {model_path}")
 
@@ -156,20 +179,20 @@ class VJEPA2Encoder(nn.Module):
 
     def _load_from_hub(self):
         """Load from PyTorch Hub as fallback"""
-        from src.hub.backbones import vjepa2_vit_giant, vjepa2_ac_vit_giant
+        vjepa_backbones, _, _, _ = self._vjepa_modules
 
         print(f"Loading V-JEPA 2 from PyTorch Hub...")
 
         try:
             # Try to load AC model (encoder + predictor)
-            self.encoder, self.ac_predictor = vjepa2_ac_vit_giant(
+            self.encoder, self.ac_predictor = vjepa_backbones.vjepa2_ac_vit_giant(
                 pretrained=True,
                 num_frames=self.num_frames,
             )
         except Exception as e:
             print(f"AC model loading failed: {e}")
             # Fall back to encoder only
-            self.encoder, _ = vjepa2_vit_giant(
+            self.encoder, _ = vjepa_backbones.vjepa2_vit_giant(
                 pretrained=True,
                 num_frames=self.num_frames,
             )
@@ -177,7 +200,8 @@ class VJEPA2Encoder(nn.Module):
 
     def _create_attentive_pooler(self, num_queries: int = 1):
         """Create AttentivePooler for aggregating patch tokens"""
-        from src.models.attentive_pooler import AttentivePooler
+        _, _, _, att_pooler = self._vjepa_modules
+        AttentivePooler = att_pooler.AttentivePooler
 
         self.pooler = AttentivePooler(
             num_queries=num_queries,

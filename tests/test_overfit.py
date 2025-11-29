@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.models.full_model import VJEPA2Policy
+from vjepa_policy.models.full_model import VJEPA2Policy
 
 
 def test_overfit(
