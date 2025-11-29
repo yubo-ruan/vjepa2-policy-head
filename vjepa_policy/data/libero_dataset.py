@@ -8,6 +8,7 @@ Supports pre-computed embeddings for faster training.
 import os
 import h5py
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from typing import Dict, List, Optional, Tuple
@@ -187,8 +188,22 @@ class LIBERODataset(Dataset):
 
     def _extract_proprio(self, obs_grp) -> np.ndarray:
         """Extract proprioception from observation group"""
-        # Possible proprio keys in order
-        proprio_keys = [
+        # LIBERO HDF5 structure:
+        # ee_pos: (T, 3) - end effector position
+        # ee_ori: (T, 3) - end effector orientation (euler angles or axis-angle)
+        # gripper_states: (T, 2) - gripper state
+        # joint_states: (T, 7) - joint positions
+        # Total: 3 + 3 + 2 + 7 = 15 dims
+
+        # Also try robosuite-style keys
+        proprio_keys_libero = [
+            'ee_pos',           # (T, 3)
+            'ee_ori',           # (T, 3)
+            'gripper_states',   # (T, 2)
+            'joint_states',     # (T, 7)
+        ]
+
+        proprio_keys_robosuite = [
             ('robot0_eef_pos', 3),
             ('robot0_eef_quat', 4),
             ('robot0_gripper_qpos', 2),
@@ -197,17 +212,27 @@ class LIBERODataset(Dataset):
         ]
 
         proprio_parts = []
-        for key, expected_dim in proprio_keys:
+
+        # Try LIBERO keys first
+        for key in proprio_keys_libero:
             if key in obs_grp:
                 part = obs_grp[key][:]
                 proprio_parts.append(part)
+
+        # If no LIBERO keys found, try robosuite keys
+        if len(proprio_parts) == 0:
+            for key, expected_dim in proprio_keys_robosuite:
+                if key in obs_grp:
+                    part = obs_grp[key][:]
+                    proprio_parts.append(part)
 
         if len(proprio_parts) == 0:
             # Fallback: try to find any proprio-like keys
             for key in obs_grp.keys():
                 if 'proprio' in key.lower() or 'state' in key.lower():
-                    proprio_parts.append(obs_grp[key][:])
-                    break
+                    if 'rgb' not in key.lower() and 'image' not in key.lower():
+                        proprio_parts.append(obs_grp[key][:])
+                        break
 
         if len(proprio_parts) == 0:
             raise KeyError(f"No proprio found. Available: {list(obs_grp.keys())}")
@@ -261,6 +286,11 @@ class LIBERODataset(Dataset):
         goal = torch.from_numpy(goal).permute(2, 0, 1).float() / 255.0       # (C, H, W)
         proprio = torch.from_numpy(proprio.copy()).float()                    # (history, proprio_dim)
         actions = torch.from_numpy(actions.copy()).float()                    # (chunk, action_dim)
+
+        # Resize images to target size if needed (LIBERO is 128x128, V-JEPA 2 needs 256x256)
+        if video.shape[-1] != self.image_size or video.shape[-2] != self.image_size:
+            video = F.interpolate(video, size=(self.image_size, self.image_size), mode='bilinear', align_corners=False)
+            goal = F.interpolate(goal.unsqueeze(0), size=(self.image_size, self.image_size), mode='bilinear', align_corners=False).squeeze(0)
 
         return {
             'video': video,

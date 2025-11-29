@@ -17,8 +17,8 @@ vjepa2:
 
 # Proprioception Encoder
 proprio:
-  # Input dimension: ee_pos(3) + ee_quat(4) + gripper(2) + joint_pos(7) + joint_vel(7)
-  dim: 23
+  # Input dimension: ee_pos(3) + ee_ori(3) + gripper(2) + joint_pos(7) = 15
+  dim: 15
   # Number of history frames
   history_len: 5
   # Output embedding dimension
