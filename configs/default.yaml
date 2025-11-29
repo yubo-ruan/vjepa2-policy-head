@@ -1,28 +1,47 @@
-# V-JEPA 2 Configuration
+# V-JEPA 2 Policy Configuration
+
+# V-JEPA 2 Encoder
 vjepa2:
-  # Local path to model weights (preferred)
-  model_path: "/workspace/models/vjepa2_vitg"
-  # Model name (used if model_path not found)
+  # Path to local checkpoint (preferred)
+  model_path: "/workspace/models/vjepa2-ac-vitg.pt"
+  # Model variant
   model_name: "vjepa2_vitg"
+  # Freeze encoder weights
   freeze: true
-  video_frames: 16
-  image_size: 384
+  # Number of input frames
+  num_frames: 16
+  # Image size (256 for ViT-G)
+  image_size: 256
+  # Use AttentivePooler for aggregation
+  use_attentive_pool: true
 
-# Proprioception Configuration  
+# Proprioception Encoder
 proprio:
-  dim: 23  # 3 (ee_pos) + 4 (ee_quat) + 2 (gripper) + 7 (joint_pos) + 7 (joint_vel)
+  # Input dimension: ee_pos(3) + ee_quat(4) + gripper(2) + joint_pos(7) + joint_vel(7)
+  dim: 23
+  # Number of history frames
   history_len: 5
+  # Output embedding dimension
+  output_dim: 256
 
-# Policy Head Configuration
+# Policy Head
 policy:
-  hidden_dim: 256
+  # Transformer hidden dimension
+  hidden_dim: 512
+  # Number of attention heads
   n_heads: 8
+  # Number of transformer layers
   n_layers: 4
+  # Number of context tokens per modality
+  n_context_tokens: 4
+  # Action dimension (7 for LIBERO: 3 pos + 3 rot + 1 gripper)
   action_dim: 7
+  # Action chunk size
   chunk_size: 50
+  # Dropout rate
   dropout: 0.1
 
-# Training Configuration
+# Training
 training:
   batch_size: 32
   learning_rate: 1e-4
@@ -30,23 +49,41 @@ training:
   epochs: 100
   warmup_epochs: 5
   grad_clip: 1.0
+  # Seed for reproducibility
+  seed: 42
 
-# Evaluation Configuration
+# Evaluation
 evaluation:
-  execute_steps: 10  # Execute 10 of 50 predicted actions
+  # Execute this many actions before replanning
+  execute_steps: 10
+  # Maximum episode length
   max_episode_steps: 300
+  # Episodes per task for evaluation
   n_episodes_per_task: 20
+  # Suites to evaluate (valid: libero_object, libero_spatial, libero_goal, libero_90, libero_10)
+  suites:
+    - "libero_object"
+    - "libero_spatial"
+    - "libero_goal"
 
-# Data Configuration
+# Data
 data:
+  # Path to LIBERO demonstrations
   libero_path: "/workspace/data/libero"
+  # Default suite
   suite: "libero_object"
-  precompute_embeddings: true
-  precomputed_path: "/workspace/data/libero_embeddings"
+  # Train/val split ratio
+  train_ratio: 0.9
+  # Sample stride (reduce overlap between samples)
+  sample_stride: 5
 
 # Logging
 logging:
+  # Weights & Biases project name
   wandb_project: "vjepa2-policy"
+  # Log every N steps
   log_every: 10
+  # Save checkpoint every N steps
   save_every: 1000
+  # Checkpoint directory
   checkpoint_dir: "/workspace/checkpoints"

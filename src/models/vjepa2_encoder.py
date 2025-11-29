@@ -1,449 +1,419 @@
 """
 V-JEPA 2 Encoder Wrapper
 
-Loads V-JEPA 2 from local weights (no HuggingFace download needed).
-Supports both video mode (16 frames) and single image mode.
+Uses the official V-JEPA 2 implementation from /workspace/vjepa/
+Loads from local checkpoint (encoder + AC predictor).
 """
 
 import torch
 import torch.nn as nn
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Tuple
 import sys
+
+# Add official V-JEPA 2 repo to path
+VJEPA_REPO_PATH = "/workspace/vjepa"
+if VJEPA_REPO_PATH not in sys.path:
+    sys.path.insert(0, VJEPA_REPO_PATH)
 
 
 class VJEPA2Encoder(nn.Module):
     """
-    V-JEPA 2 encoder wrapper with local weight loading.
-    
-    Supports two loading methods:
-    1. Local weights (preferred): Load from workspace/models/
-    2. PyTorch Hub: torch.hub.load('facebookresearch/vjepa2', ...)
-    3. HuggingFace (fallback): AutoModel.from_pretrained(...)
+    V-JEPA 2 encoder wrapper using official Meta implementation.
+
+    Key details:
+    - ViT-Giant embed_dim = 1408
+    - Input format: (B, C, T, H, W) - channels first, then time
+    - Uses RoPE (Rotary Position Embeddings)
+    - Output: patch tokens (B, N, D) where N = (T/2) * (H/16) * (W/16)
     """
-    
+
+    # Model configurations
+    MODEL_CONFIGS = {
+        'vjepa2_vitl': {'img_size': 256, 'embed_dim': 1024},
+        'vjepa2_vith': {'img_size': 256, 'embed_dim': 1280},
+        'vjepa2_vitg': {'img_size': 256, 'embed_dim': 1408},
+        'vjepa2_vitg_384': {'img_size': 384, 'embed_dim': 1408},
+    }
+
     def __init__(
         self,
-        model_path: Optional[str] = None,
-        model_name: str = "vjepa2_vitg",  # vjepa2_vitl, vjepa2_vith, vjepa2_vitg
+        model_path: Optional[str] = "/workspace/models/vjepa2-ac-vitg.pt",
+        model_name: str = "vjepa2_vitg",
         freeze: bool = True,
         device: str = "cuda",
-        load_ac_predictor: bool = False,  # Also load action-conditioned predictor
+        num_frames: int = 16,
+        use_attentive_pool: bool = True,
+        pool_num_queries: int = 1,
     ):
         """
         Args:
-            model_path: Path to local model weights directory
-                        Expected structure: model_path/encoder.pth, model_path/config.yaml
-                        If None, will try PyTorch Hub
+            model_path: Path to checkpoint file (e.g., vjepa2-ac-vitg.pt)
             model_name: Model variant (vjepa2_vitl, vjepa2_vith, vjepa2_vitg)
             freeze: Whether to freeze encoder weights
             device: Device to load model on
-            load_ac_predictor: Whether to also load the AC predictor for planning
+            num_frames: Number of input frames (default 16)
+            use_attentive_pool: Use AttentivePooler for aggregation (recommended)
+            pool_num_queries: Number of query tokens for AttentivePooler
         """
         super().__init__()
-        
+
         self.device = device
         self.model_name = model_name
-        self.freeze = freeze
-        
+        self.freeze_encoder = freeze
+        self.num_frames = num_frames
+        self.use_attentive_pool = use_attentive_pool
+
+        # Get model config
+        config = self.MODEL_CONFIGS.get(model_name, self.MODEL_CONFIGS['vjepa2_vitg'])
+        self.img_size = config['img_size']
+        self.embed_dim = config['embed_dim']
+
         # Load model
-        if model_path is not None:
-            self._load_from_local(model_path, load_ac_predictor)
-        else:
-            self._load_from_hub(load_ac_predictor)
-        
+        self._load_model(model_path)
+
+        # Create pooler if requested
+        if use_attentive_pool:
+            self._create_attentive_pooler(pool_num_queries)
+
         # Move to device
         self.encoder.to(device)
-        self.encoder.eval()
-        
         if hasattr(self, 'ac_predictor') and self.ac_predictor is not None:
             self.ac_predictor.to(device)
-            self.ac_predictor.eval()
-        
-        # Freeze if specified
+        if hasattr(self, 'pooler'):
+            self.pooler.to(device)
+
+        # Freeze encoder if specified
         if freeze:
-            self._freeze()
-        
-        # Get embedding dimension
-        self.embed_dim = self._get_embed_dim()
-        print(f"V-JEPA 2 loaded. Embedding dim: {self.embed_dim}")
-    
-    def _load_from_local(self, model_path: str, load_ac_predictor: bool):
-        """Load model from local weights directory"""
-        model_path = Path(model_path)
-        
-        print(f"Loading V-JEPA 2 from local path: {model_path}")
-        
-        # Check for different possible file structures
-        # Structure 1: Direct checkpoint file
-        if model_path.suffix in ['.pth', '.pt', '.ckpt']:
-            checkpoint_path = model_path
-        # Structure 2: Directory with checkpoint inside
+            self._freeze_encoder()
+
+        print(f"V-JEPA 2 loaded: {model_name}")
+        print(f"  Embed dim: {self.embed_dim}")
+        print(f"  Image size: {self.img_size}")
+        print(f"  Num frames: {self.num_frames}")
+        print(f"  Pooling: {'AttentivePooler' if use_attentive_pool else 'Mean'}")
+        print(f"  Frozen: {freeze}")
+
+    def _load_model(self, model_path: Optional[str]):
+        """Load encoder and optionally AC predictor from checkpoint"""
+
+        if model_path and Path(model_path).exists():
+            self._load_from_local(model_path)
         else:
-            possible_files = [
-                model_path / "encoder.pth",
-                model_path / "model.pth", 
-                model_path / "checkpoint.pth",
-                model_path / "vjepa2_vitg.pth",
-                model_path / "vjepa2_vith.pth",
-                model_path / "vjepa2_vitl.pth",
-            ]
-            
-            checkpoint_path = None
-            for f in possible_files:
-                if f.exists():
-                    checkpoint_path = f
-                    break
-            
-            if checkpoint_path is None:
-                # List available files
-                available = list(model_path.glob("*.pth")) + list(model_path.glob("*.pt"))
-                raise FileNotFoundError(
-                    f"Could not find model checkpoint in {model_path}. "
-                    f"Available files: {available}"
-                )
-        
-        print(f"Loading checkpoint: {checkpoint_path}")
-        
+            self._load_from_hub()
+
+    def _load_from_local(self, model_path: str):
+        """Load from local checkpoint file"""
+        from src.hub.backbones import _make_vjepa2_ac_model, _clean_backbone_key
+        from src.models import vision_transformer as vit_encoder
+        from src.models import ac_predictor as vit_ac_predictor
+
+        print(f"Loading V-JEPA 2 from local: {model_path}")
+
         # Load checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        
-        # Handle different checkpoint formats
-        if 'model' in checkpoint:
-            state_dict = checkpoint['model']
-        elif 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        elif 'encoder' in checkpoint:
-            state_dict = checkpoint['encoder']
-        else:
-            state_dict = checkpoint
-        
-        # Build model architecture
-        self.encoder = self._build_encoder_architecture()
-        
-        # Load weights
-        # Handle potential key mismatches
-        try:
-            self.encoder.load_state_dict(state_dict, strict=True)
-        except RuntimeError as e:
-            print(f"Strict loading failed, trying non-strict: {e}")
-            self.encoder.load_state_dict(state_dict, strict=False)
-        
-        # Load AC predictor if requested
-        if load_ac_predictor:
-            ac_path = model_path.parent / "ac_predictor.pth" if model_path.is_file() else model_path / "ac_predictor.pth"
-            if ac_path.exists():
-                print(f"Loading AC predictor: {ac_path}")
-                ac_checkpoint = torch.load(ac_path, map_location='cpu')
-                self.ac_predictor = self._build_ac_predictor_architecture()
-                self.ac_predictor.load_state_dict(ac_checkpoint)
-            else:
-                print(f"AC predictor not found at {ac_path}, skipping")
-                self.ac_predictor = None
+        checkpoint = torch.load(model_path, map_location='cpu')
+
+        # Determine model variant from checkpoint or model_name
+        img_size = self.img_size
+
+        # Build encoder architecture
+        vit_encoder_kwargs = dict(
+            patch_size=16,
+            img_size=(img_size, img_size),
+            num_frames=self.num_frames,
+            tubelet_size=2,
+            use_sdpa=True,
+            use_SiLU=False,
+            wide_SiLU=True,
+            uniform_power=False,
+            use_rope=True,
+        )
+
+        # Use ViT-Giant architecture
+        self.encoder = vit_encoder.vit_giant_xformers(**vit_encoder_kwargs)
+
+        # Load encoder weights
+        if 'encoder' in checkpoint:
+            encoder_state_dict = _clean_backbone_key(checkpoint['encoder'])
+            self.encoder.load_state_dict(encoder_state_dict, strict=False)
+            print("  Loaded encoder weights")
+
+        # Build and load AC predictor if available
+        if 'predictor' in checkpoint:
+            vit_predictor_kwargs = dict(
+                img_size=(img_size, img_size),
+                patch_size=16,
+                num_frames=self.num_frames,
+                tubelet_size=2,
+                embed_dim=self.embed_dim,
+            )
+            self.ac_predictor = vit_ac_predictor.vit_ac_predictor(**vit_predictor_kwargs)
+            predictor_state_dict = _clean_backbone_key(checkpoint['predictor'])
+            self.ac_predictor.load_state_dict(predictor_state_dict, strict=True)
+            print("  Loaded AC predictor weights")
         else:
             self.ac_predictor = None
-    
-    def _load_from_hub(self, load_ac_predictor: bool):
-        """Load model from PyTorch Hub"""
-        print(f"Loading V-JEPA 2 from PyTorch Hub: {self.model_name}")
-        
+
+    def _load_from_hub(self):
+        """Load from PyTorch Hub as fallback"""
+        from src.hub.backbones import vjepa2_vit_giant, vjepa2_ac_vit_giant
+
+        print(f"Loading V-JEPA 2 from PyTorch Hub...")
+
         try:
-            if load_ac_predictor:
-                # Load both encoder and AC predictor
-                self.encoder, self.ac_predictor = torch.hub.load(
-                    'facebookresearch/vjepa2',
-                    f'{self.model_name}_ac',  # e.g., vjepa2_vitg_ac
-                    pretrained=True,
-                )
-            else:
-                # Load encoder only
-                self.encoder = torch.hub.load(
-                    'facebookresearch/vjepa2',
-                    self.model_name,  # e.g., vjepa2_vitg
-                    pretrained=True,
-                )
-                self.ac_predictor = None
-                
-        except Exception as e:
-            print(f"PyTorch Hub loading failed: {e}")
-            print("Falling back to HuggingFace...")
-            self._load_from_huggingface()
-    
-    def _load_from_huggingface(self):
-        """Fallback: Load from HuggingFace"""
-        from transformers import AutoModel
-        
-        model_map = {
-            'vjepa2_vitl': 'facebook/vjepa2-vitl-fpc64-256',
-            'vjepa2_vith': 'facebook/vjepa2-vith-fpc64-256',
-            'vjepa2_vitg': 'facebook/vjepa2-vitg-fpc64-384',
-        }
-        
-        hf_name = model_map.get(self.model_name, self.model_name)
-        print(f"Loading from HuggingFace: {hf_name}")
-        
-        self.encoder = AutoModel.from_pretrained(hf_name)
-        self.ac_predictor = None
-        self._use_hf = True
-    
-    def _build_encoder_architecture(self):
-        """
-        Build V-JEPA 2 encoder architecture.
-        
-        This should match the architecture used during pre-training.
-        For now, we use a placeholder - the actual architecture depends
-        on how the weights were saved.
-        """
-        # Try to import from vjepa2 repo if available
-        try:
-            from vjepa2.models import vit_giant, vit_huge, vit_large
-            
-            model_builders = {
-                'vjepa2_vitl': vit_large,
-                'vjepa2_vith': vit_huge,
-                'vjepa2_vitg': vit_giant,
-            }
-            
-            builder = model_builders.get(self.model_name)
-            if builder:
-                return builder()
-        except ImportError:
-            pass
-        
-        # Fallback: Use timm or manual implementation
-        try:
-            import timm
-            
-            timm_models = {
-                'vjepa2_vitl': 'vit_large_patch16_384',
-                'vjepa2_vith': 'vit_huge_patch14_clip_384',
-                'vjepa2_vitg': 'vit_giant_patch14_clip_224',
-            }
-            
-            timm_name = timm_models.get(self.model_name)
-            if timm_name:
-                return timm.create_model(timm_name, pretrained=False)
-        except ImportError:
-            pass
-        
-        raise RuntimeError(
-            f"Could not build encoder architecture for {self.model_name}. "
-            "Please ensure vjepa2 or timm is installed."
-        )
-    
-    def _build_ac_predictor_architecture(self):
-        """Build AC predictor architecture"""
-        # Placeholder - actual implementation depends on vjepa2 repo
-        try:
-            from vjepa2.models import ACPredictor
-            return ACPredictor()
-        except ImportError:
-            raise RuntimeError(
-                "AC predictor architecture not available. "
-                "Please install vjepa2 repo."
+            # Try to load AC model (encoder + predictor)
+            self.encoder, self.ac_predictor = vjepa2_ac_vit_giant(
+                pretrained=True,
+                num_frames=self.num_frames,
             )
-    
-    def _freeze(self):
-        """Freeze all encoder parameters"""
+        except Exception as e:
+            print(f"AC model loading failed: {e}")
+            # Fall back to encoder only
+            self.encoder, _ = vjepa2_vit_giant(
+                pretrained=True,
+                num_frames=self.num_frames,
+            )
+            self.ac_predictor = None
+
+    def _create_attentive_pooler(self, num_queries: int = 1):
+        """Create AttentivePooler for aggregating patch tokens"""
+        from src.models.attentive_pooler import AttentivePooler
+
+        self.pooler = AttentivePooler(
+            num_queries=num_queries,
+            embed_dim=self.embed_dim,
+            num_heads=16,
+            mlp_ratio=4.0,
+            depth=1,
+        )
+        # Pooler is trainable by default
+        print(f"  Created AttentivePooler with {num_queries} queries")
+
+    def _freeze_encoder(self):
+        """Freeze encoder parameters (pooler remains trainable)"""
         for param in self.encoder.parameters():
             param.requires_grad = False
-        print("V-JEPA 2 encoder frozen")
-    
-    def _get_embed_dim(self) -> int:
-        """Get embedding dimension from model"""
-        # Try common attribute names
-        if hasattr(self.encoder, 'embed_dim'):
-            return self.encoder.embed_dim
-        if hasattr(self.encoder, 'hidden_size'):
-            return self.encoder.hidden_size
-        if hasattr(self.encoder, 'config') and hasattr(self.encoder.config, 'hidden_size'):
-            return self.encoder.config.hidden_size
-        
-        # Fallback: run a forward pass
-        print("Detecting embed_dim via forward pass...")
-        with torch.no_grad():
-            dummy = torch.zeros(1, 16, 3, 224, 224).to(self.device)
-            out = self._forward_encoder(dummy)
-            return out.shape[-1]
-    
-    def _forward_encoder(self, video: torch.Tensor) -> torch.Tensor:
-        """
-        Internal forward pass through encoder.
-        Handles different model interfaces.
-        """
-        # V-JEPA 2 native interface
-        if hasattr(self.encoder, 'forward_features'):
-            features = self.encoder.forward_features(video)
-        # HuggingFace interface
-        elif hasattr(self, '_use_hf') and self._use_hf:
-            outputs = self.encoder(pixel_values=video)
-            features = outputs.last_hidden_state
-        # Standard forward
+        if self.ac_predictor is not None:
+            for param in self.ac_predictor.parameters():
+                param.requires_grad = False
+        print("  Encoder frozen")
+
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply ImageNet normalization"""
+        # x should be in [0, 1] range
+        mean = torch.tensor([0.485, 0.456, 0.406], device=x.device)
+        std = torch.tensor([0.229, 0.224, 0.225], device=x.device)
+
+        # Handle both (B, C, T, H, W) and (B, C, H, W)
+        if x.dim() == 5:
+            mean = mean.view(1, 3, 1, 1, 1)
+            std = std.view(1, 3, 1, 1, 1)
         else:
-            features = self.encoder(video)
-        
-        # Pool over spatial/temporal dimensions if needed
-        if features.dim() == 4:  # (B, T, N, D) or (B, N, T, D)
-            features = features.mean(dim=(1, 2))
-        elif features.dim() == 3:  # (B, N, D)
-            features = features.mean(dim=1)
-        
-        return features
-    
+            mean = mean.view(1, 3, 1, 1)
+            std = std.view(1, 3, 1, 1)
+
+        return (x - mean) / std
+
+    def encode_patches(self, video: torch.Tensor) -> torch.Tensor:
+        """
+        Encode video to patch tokens (no pooling).
+
+        Args:
+            video: (B, C, T, H, W) video tensor, values in [0, 1]
+                   Note: channels first, then time!
+
+        Returns:
+            patches: (B, N, D) patch tokens
+                     N = (T/tubelet_size) * (H/patch_size) * (W/patch_size)
+        """
+        # Normalize
+        video = self._normalize(video)
+
+        # Forward through encoder
+        with torch.no_grad() if self.freeze_encoder else torch.enable_grad():
+            patches = self.encoder(video)
+
+        return patches
+
     def encode_video(self, video: torch.Tensor) -> torch.Tensor:
         """
-        Encode video clip to single embedding.
-        
+        Encode video clip to embedding(s).
+
         Args:
-            video: (B, T, C, H, W) video tensor, values in [0, 1]
-                   T should be 16 frames typically
-        
+            video: (B, C, T, H, W) video tensor, values in [0, 1]
+                   OR (B, T, C, H, W) - will be permuted automatically
+
         Returns:
-            embedding: (B, embed_dim) video embedding
+            embedding: (B, embed_dim) if pool_num_queries=1
+                      (B, num_queries, embed_dim) if pool_num_queries>1
         """
-        # Ensure correct format
-        if video.dim() == 4:  # (B, C, H, W) single image
-            video = video.unsqueeze(1).repeat(1, 2, 1, 1, 1)
-        
-        B, T, C, H, W = video.shape
-        
-        # Normalize if needed (V-JEPA 2 expects specific normalization)
-        # ImageNet normalization
-        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 1, 3, 1, 1).to(video.device)
-        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 1, 3, 1, 1).to(video.device)
-        video = (video - mean) / std
-        
-        with torch.no_grad() if self.freeze else torch.enable_grad():
-            embedding = self._forward_encoder(video)
-        
+        # Handle both input formats
+        if video.dim() == 5:
+            B, dim2, dim3, H, W = video.shape
+            # Check if input is (B, T, C, H, W) and needs permutation
+            if dim3 == 3 and dim2 != 3:  # dim3 is C=3, dim2 is T
+                video = video.permute(0, 2, 1, 3, 4)  # -> (B, C, T, H, W)
+
+        # Get patch tokens
+        patches = self.encode_patches(video)
+
+        # Pool to get embedding
+        if self.use_attentive_pool:
+            embedding = self.pooler(patches)
+            if embedding.shape[1] == 1:
+                embedding = embedding.squeeze(1)  # (B, D)
+        else:
+            embedding = patches.mean(dim=1)  # (B, D)
+
         return embedding
-    
+
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         """
         Encode single image to embedding.
-        
+
         Args:
             image: (B, C, H, W) image tensor, values in [0, 1]
-        
+
         Returns:
             embedding: (B, embed_dim) image embedding
         """
-        # Expand to video format (repeat frame)
-        video = image.unsqueeze(1).repeat(1, 2, 1, 1, 1)
+        # Expand to video format: (B, C, H, W) -> (B, C, 2, H, W)
+        # Use 2 frames (1 tubelet) for minimal computation
+        video = image.unsqueeze(2).repeat(1, 1, 2, 1, 1)
         return self.encode_video(video)
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass - auto-detect video vs image"""
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        return_patches: bool = False,
+    ) -> torch.Tensor:
+        """
+        Forward pass - auto-detect video vs image.
+
+        Args:
+            x: Input tensor
+               - 5D (B, C, T, H, W) or (B, T, C, H, W): video
+               - 4D (B, C, H, W): image
+            return_patches: If True, return patch tokens instead of pooled embedding
+
+        Returns:
+            embedding or patches depending on return_patches
+        """
         if x.dim() == 5:
+            if return_patches:
+                # Handle format conversion
+                B, dim2, dim3, H, W = x.shape
+                if dim3 == 3 and dim2 != 3:
+                    x = x.permute(0, 2, 1, 3, 4)
+                return self.encode_patches(x)
             return self.encode_video(x)
         elif x.dim() == 4:
+            if return_patches:
+                video = x.unsqueeze(2).repeat(1, 1, 2, 1, 1)
+                return self.encode_patches(video)
             return self.encode_image(x)
         else:
             raise ValueError(f"Expected 4D or 5D tensor, got {x.dim()}D")
-    
-    def predict_next_state(
-        self,
-        current_emb: torch.Tensor,
-        action: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Predict next state embedding using AC predictor.
-        
-        Args:
-            current_emb: (B, embed_dim) current state embedding
-            action: (B, action_dim) action to take
-        
-        Returns:
-            next_emb: (B, embed_dim) predicted next state embedding
-        """
-        if self.ac_predictor is None:
-            raise RuntimeError("AC predictor not loaded. Set load_ac_predictor=True")
-        
-        with torch.no_grad():
-            next_emb = self.ac_predictor(current_emb, action)
-        
-        return next_emb
+
+    def get_trainable_params(self):
+        """Get trainable parameters (pooler if encoder is frozen)"""
+        params = []
+        if self.use_attentive_pool:
+            params.extend(self.pooler.parameters())
+        if not self.freeze_encoder:
+            params.extend(self.encoder.parameters())
+        return params
 
 
 def find_model_weights(base_path: str = "/workspace/models") -> dict:
     """
     Find available V-JEPA 2 weights in the workspace.
-    
+
     Returns dict of {model_name: path}
     """
     base = Path(base_path)
-    
+
     if not base.exists():
         print(f"Models directory not found: {base}")
         return {}
-    
+
     available = {}
-    
+
     # Search for V-JEPA 2 related files
     patterns = ["*vjepa*", "*VJEPA*", "*jepa*"]
-    
+
     for pattern in patterns:
         for path in base.rglob(pattern):
             if path.is_file() and path.suffix in ['.pth', '.pt', '.ckpt']:
                 name = path.stem
                 available[name] = str(path)
-            elif path.is_dir():
-                # Check for checkpoint files inside
-                for ckpt in path.glob("*.pth"):
-                    name = f"{path.name}/{ckpt.stem}"
-                    available[name] = str(ckpt)
-    
+
     if available:
         print(f"Found V-JEPA 2 weights:")
         for name, path in available.items():
             print(f"  {name}: {path}")
     else:
         print(f"No V-JEPA 2 weights found in {base}")
-        print("Available files:")
-        for f in base.rglob("*"):
-            if f.is_file():
-                print(f"  {f}")
-    
+        for f in base.iterdir():
+            print(f"  {f}")
+
     return available
 
 
-def test_vjepa2_encoder_local():
+def test_vjepa2_encoder():
     """Test V-JEPA 2 encoder with local weights"""
-    
-    # Find available weights
-    available = find_model_weights("/workspace/models")
-    
-    if not available:
-        print("No local weights found, testing with Hub...")
-        model_path = None
-    else:
-        # Use first available
-        model_name, model_path = next(iter(available.items()))
-        print(f"Using: {model_name} at {model_path}")
-    
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
+    print(f"Device: {device}")
+
+    # Find weights
+    available = find_model_weights("/workspace/models")
+    model_path = available.get('vjepa2-ac-vitg', "/workspace/models/vjepa2-ac-vitg.pt")
+
+    # Create encoder
     encoder = VJEPA2Encoder(
         model_path=model_path,
         model_name="vjepa2_vitg",
         device=device,
         freeze=True,
+        num_frames=16,
+        use_attentive_pool=True,
     )
-    
-    # Test video encoding
-    print("\nTesting video encoding...")
-    video = torch.rand(2, 16, 3, 384, 384).to(device)
+
+    # Test video encoding (B, C, T, H, W) format
+    print("\nTesting video encoding (B, C, T, H, W)...")
+    video = torch.rand(2, 3, 16, 256, 256).to(device)
     video_emb = encoder.encode_video(video)
-    print(f"Video embedding shape: {video_emb.shape}")
-    
+    print(f"  Input shape: {video.shape}")
+    print(f"  Output shape: {video_emb.shape}")
+    assert video_emb.shape == (2, 1408), f"Expected (2, 1408), got {video_emb.shape}"
+
+    # Test video encoding (B, T, C, H, W) format - should auto-convert
+    print("\nTesting video encoding (B, T, C, H, W) - auto-convert...")
+    video_alt = torch.rand(2, 16, 3, 256, 256).to(device)
+    video_emb_alt = encoder.encode_video(video_alt)
+    print(f"  Input shape: {video_alt.shape}")
+    print(f"  Output shape: {video_emb_alt.shape}")
+    assert video_emb_alt.shape == (2, 1408)
+
     # Test image encoding
     print("\nTesting image encoding...")
-    image = torch.rand(2, 3, 384, 384).to(device)
+    image = torch.rand(2, 3, 256, 256).to(device)
     image_emb = encoder.encode_image(image)
-    print(f"Image embedding shape: {image_emb.shape}")
-    
+    print(f"  Input shape: {image.shape}")
+    print(f"  Output shape: {image_emb.shape}")
+    assert image_emb.shape == (2, 1408)
+
+    # Test patch tokens
+    print("\nTesting patch token extraction...")
+    patches = encoder(video, return_patches=True)
+    print(f"  Patch tokens shape: {patches.shape}")
+    # Expected: (B, N, D) where N = (16/2) * (256/16) * (256/16) = 8 * 16 * 16 = 2048
+    expected_n = (16 // 2) * (256 // 16) * (256 // 16)
+    assert patches.shape == (2, expected_n, 1408), f"Expected (2, {expected_n}, 1408), got {patches.shape}"
+
     print("\n✅ V-JEPA 2 encoder test passed!")
 
 
 if __name__ == "__main__":
-    test_vjepa2_encoder_local()
+    test_vjepa2_encoder()
