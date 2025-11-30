@@ -280,13 +280,14 @@ class Trainer:
         print(f"Loaded checkpoint: {path}")
         return checkpoint.get('epoch', 0)
 
-    def train(self, epochs: int, wandb_project: Optional[str] = None, wandb_run_name: Optional[str] = None):
+    def train(self, epochs: int, wandb_project: Optional[str] = None, wandb_run_name: Optional[str] = None, start_epoch: int = 0):
         """Full training loop.
 
         Args:
             epochs: Number of epochs to train
             wandb_project: W&B project name (enables W&B if provided)
             wandb_run_name: W&B run name (optional)
+            start_epoch: Epoch to start from (for resuming training)
         """
         # Initialize W&B if requested
         if wandb_project and WANDB_AVAILABLE:
@@ -303,13 +304,16 @@ class Trainer:
                 })
             print(f"W&B initialized: {wandb.run.url}")
 
-        # Create scheduler
-        if self.warmup_epochs < epochs:
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=epochs - self.warmup_epochs,
-                eta_min=self.lr * 0.01,
-            )
+        # Create scheduler if not already set (from resume)
+        if self.scheduler is None and self.warmup_epochs < epochs:
+            # Adjust T_max for starting epoch
+            t_max = epochs - max(self.warmup_epochs, start_epoch)
+            if t_max > 0:
+                self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=t_max,
+                    eta_min=self.lr * 0.01,
+                )
 
         print("=" * 60)
         print("Starting Training")
@@ -326,7 +330,7 @@ class Trainer:
         print("=" * 60)
         print()
 
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, epochs):
             start_time = time.time()
 
             # Warmup learning rate

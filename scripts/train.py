@@ -125,6 +125,10 @@ def main():
     parser.add_argument('--run_name', type=str, default=None,
                         help='W&B run name')
 
+    # Resume training
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume from (or "latest" to use latest.pt)')
+
     args = parser.parse_args()
 
     # ========== Load and Merge Config ==========
@@ -245,11 +249,37 @@ def main():
         use_wandb=False,  # Let train() initialize W&B
     )
 
+    # ========== Resume from checkpoint if requested ==========
+    start_epoch = 0
+    if args.resume:
+        if args.resume == 'latest':
+            resume_path = Path(save_dir) / 'latest.pt'
+        else:
+            resume_path = Path(args.resume)
+
+        if resume_path.exists():
+            start_epoch = trainer.load_checkpoint(str(resume_path))
+            # The checkpoint stores the epoch that completed, so we start from next
+            start_epoch = start_epoch + 1
+            print(f"Resuming from epoch {start_epoch}")
+
+            # Recreate scheduler with remaining epochs
+            remaining_epochs = config['training']['epochs'] - start_epoch
+            if remaining_epochs > 0 and trainer.warmup_epochs < config['training']['epochs']:
+                trainer.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    trainer.optimizer,
+                    T_max=remaining_epochs,
+                    eta_min=trainer.lr * 0.01,
+                )
+        else:
+            print(f"Warning: Checkpoint not found at {resume_path}, starting from scratch")
+
     # ========== Train ==========
     trainer.train(
         epochs=config['training']['epochs'],
         wandb_project=wandb_project,
         wandb_run_name=wandb_run_name,
+        start_epoch=start_epoch,
     )
 
     print()
