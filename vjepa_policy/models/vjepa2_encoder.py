@@ -58,6 +58,7 @@ class VJEPA2Encoder(nn.Module):
         num_frames: int = 16,
         use_attentive_pool: bool = True,
         pool_num_queries: int = 1,
+        load_ac_predictor: bool = False,
     ):
         """
         Args:
@@ -68,8 +69,10 @@ class VJEPA2Encoder(nn.Module):
             num_frames: Number of input frames (default 16)
             use_attentive_pool: Use AttentivePooler for aggregation (recommended)
             pool_num_queries: Number of query tokens for AttentivePooler
+            load_ac_predictor: Whether to load AC predictor (saves memory if False)
         """
         super().__init__()
+        self.load_ac_predictor = load_ac_predictor
 
         self.device = device
         self.model_name = model_name
@@ -161,8 +164,8 @@ class VJEPA2Encoder(nn.Module):
             self.encoder.load_state_dict(encoder_state_dict, strict=False)
             print("  Loaded encoder weights")
 
-        # Build and load AC predictor if available
-        if 'predictor' in checkpoint:
+        # Build and load AC predictor if available and requested
+        if 'predictor' in checkpoint and self.load_ac_predictor:
             vit_predictor_kwargs = dict(
                 img_size=(img_size, img_size),
                 patch_size=16,
@@ -176,6 +179,8 @@ class VJEPA2Encoder(nn.Module):
             print("  Loaded AC predictor weights")
         else:
             self.ac_predictor = None
+            if 'predictor' in checkpoint and not self.load_ac_predictor:
+                print("  Skipped AC predictor loading (not needed, saves memory)")
 
     def _load_from_hub(self):
         """Load from PyTorch Hub as fallback"""

@@ -75,12 +75,15 @@ class PolicyDataset(Dataset):
         # Load all samples into memory
         self.samples = self._load_samples()
 
+        # Cache transitions and weights for each sample (computed once, not per iteration)
+        self._cache_sample_metadata()
+
         # Build index with optional oversampling
         self.indices = self._build_indices()
 
         print(f"Loaded {len(self.samples)} base samples from {self.embeddings_dir}")
         if gripper_oversample > 1 and is_training:
-            n_trans = sum(1 for i in self.indices if self._has_transition(self.samples[i]['actions']))
+            n_trans = sum(1 for i in self.indices if self._sample_has_transition[i])
             print(f"After {gripper_oversample}x oversampling: {len(self.indices)} samples")
             print(f"Transition samples: {n_trans} ({100*n_trans/len(self.indices):.1f}%)")
 
@@ -112,6 +115,50 @@ class PolicyDataset(Dataset):
 
         return samples
 
+    def _cache_sample_metadata(self):
+        """Cache transitions and weights for all samples at init time."""
+        self._sample_transitions = []  # List of transition indices per sample
+        self._sample_has_transition = []  # Boolean per sample
+        self._sample_weights = []  # Cached weights per sample
+
+        for sample in self.samples:
+            actions = sample['actions'][:self.chunk_size]
+
+            # Pad actions if needed (same logic as __getitem__)
+            if len(actions) < self.chunk_size:
+                pad_len = self.chunk_size - len(actions)
+                pad = actions[-1:].repeat(pad_len, 1)
+                actions = torch.cat([actions, pad], dim=0)
+
+            # Find transitions
+            transitions = self._find_transitions(actions)
+            self._sample_transitions.append(transitions)
+            self._sample_has_transition.append(len(transitions) > 0)
+
+            # Compute weights (using vectorized approach)
+            weights = self._compute_weights_vectorized(actions, transitions)
+            self._sample_weights.append(weights)
+
+    def _compute_weights_vectorized(self, actions: torch.Tensor, transitions: List[int]) -> torch.Tensor:
+        """Compute weights using vectorized operations (faster than per-element)."""
+        T = len(actions)
+        weights = torch.ones(T)
+
+        # Start weighting
+        weights[:self.start_steps] = self.start_weight
+
+        # Transition weighting (vectorized)
+        if transitions:
+            for trans_t in transitions:
+                start = max(0, trans_t - self.transition_window)
+                end = min(T, trans_t + self.transition_window + 1)
+                weights[start:end] = torch.clamp(
+                    weights[start:end],
+                    min=self.transition_weight
+                )
+
+        return weights
+
     def _has_transition(self, actions: torch.Tensor) -> bool:
         """Check if action sequence contains gripper transition."""
         gripper = actions[:, 6]
@@ -135,8 +182,8 @@ class PolicyDataset(Dataset):
             return list(range(len(self.samples)))
 
         indices = []
-        for i, sample in enumerate(self.samples):
-            if self._has_transition(sample['actions']):
+        for i in range(len(self.samples)):
+            if self._sample_has_transition[i]:
                 # Oversample transitions
                 indices.extend([i] * self.gripper_oversample)
             else:
@@ -199,10 +246,17 @@ class PolicyDataset(Dataset):
         sample = self.samples[sample_idx]
 
         # Get data - spatial tokens (64, 1408)
-        video_tokens = sample['video_tokens'].clone()
-        goal_tokens = sample['goal_tokens'].clone()
-        proprio = sample['proprio'].clone()
-        actions = sample['actions'][:self.chunk_size].clone()
+        video_tokens = sample['video_tokens']
+        goal_tokens = sample['goal_tokens']
+        proprio = sample['proprio']
+        actions = sample['actions'][:self.chunk_size]
+
+        # Normalize proprio shape - some datasets have [5, 15], others have [75]
+        # Always use [5, 15] format for the model
+        if proprio.dim() == 1:
+            # Flattened format [75] -> reshape to [5, 15]
+            proprio = proprio.view(5, 15)
+        # Already [5, 15] - no change needed
 
         # Pad actions if needed
         if len(actions) < self.chunk_size:
@@ -210,22 +264,26 @@ class PolicyDataset(Dataset):
             pad = actions[-1:].repeat(pad_len, 1)
             actions = torch.cat([actions, pad], dim=0)
 
+        # Use cached weights (clone only if training with jitter to avoid modifying cache)
+        if self.gripper_jitter > 0 and self.is_training:
+            actions = actions.clone()
+            actions = self._apply_gripper_jitter(actions)
+            # Recompute weights if jitter was applied (transitions may have moved)
+            transitions = self._find_transitions(actions)
+            weights = self._compute_weights_vectorized(actions, transitions)
+        else:
+            # Use cached weights (much faster)
+            weights = self._sample_weights[sample_idx]
+
         # Apply normalization
         if self.normalize:
             video_tokens = F.normalize(video_tokens, dim=-1)
             goal_tokens = F.normalize(goal_tokens, dim=-1)
 
-        # Apply noise (training only)
+        # Apply noise (training only) - clone here if noise is applied
         if self.noise_std > 0 and self.is_training:
             video_tokens = video_tokens + torch.randn_like(video_tokens) * self.noise_std
             goal_tokens = goal_tokens + torch.randn_like(goal_tokens) * self.noise_std
-
-        # Apply gripper jitter (training only)
-        if self.gripper_jitter > 0 and self.is_training:
-            actions = self._apply_gripper_jitter(actions)
-
-        # Compute loss weights
-        weights = self._compute_weights(actions)
 
         return {
             'video_tokens': video_tokens,
@@ -244,6 +302,37 @@ class PolicyDataset(Dataset):
         self.is_training = False
 
 
+class CombinedDataset(Dataset):
+    """Dataset that combines multiple embedding directories (for multi-suite training)."""
+
+    def __init__(self, datasets: List[PolicyDataset]):
+        self.datasets = datasets
+        self._lengths = [len(d) for d in datasets]
+        self._total = sum(self._lengths)
+        # Build cumulative offsets for indexing
+        self._offsets = [0]
+        for L in self._lengths[:-1]:
+            self._offsets.append(self._offsets[-1] + L)
+
+    def __len__(self):
+        return self._total
+
+    def __getitem__(self, idx):
+        # Find which dataset this index belongs to
+        for i, (offset, length) in enumerate(zip(self._offsets, self._lengths)):
+            if idx < offset + length:
+                return self.datasets[i][idx - offset]
+        raise IndexError(f"Index {idx} out of range")
+
+    def train(self):
+        for d in self.datasets:
+            d.train()
+
+    def eval(self):
+        for d in self.datasets:
+            d.eval()
+
+
 def create_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
     """
     Create train and val dataloaders from config.
@@ -253,6 +342,8 @@ def create_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
 
     Returns:
         train_loader, val_loader
+
+    Supports multi-suite training via 'suites' config key (list of suite names).
     """
     data_cfg = config['data']
     model_cfg = config['model']
@@ -260,51 +351,75 @@ def create_dataloaders(config: dict) -> Tuple[DataLoader, DataLoader]:
     train_cfg = config['training']
 
     # Determine embeddings directory
-    suite = data_cfg.get('suite', 'libero_spatial')
+    # Support multiple suites via 'suites' list, or single suite via 'suite'
+    suites = data_cfg.get('suites', [data_cfg.get('suite', 'libero_spatial')])
+    if isinstance(suites, str):
+        suites = [suites]
     base_dir = Path(data_cfg['embeddings_dir'])
 
-    # Try suite-specific subdirectory first
-    suite_dir = base_dir / f"{suite}_spatial"
-    if not suite_dir.exists():
-        suite_dir = base_dir / suite
-    if not suite_dir.exists():
-        suite_dir = base_dir
+    # Collect datasets from all suites
+    train_datasets = []
+    val_datasets = []
 
-    # Create train dataset
-    train_dir = suite_dir / 'train'
-    if not train_dir.exists():
-        train_dir = suite_dir  # Fall back to non-split directory
+    for suite in suites:
+        # Try suite-specific subdirectory first
+        suite_dir = base_dir / f"{suite}_spatial"
+        if not suite_dir.exists():
+            suite_dir = base_dir / suite
+        if not suite_dir.exists():
+            suite_dir = base_dir
 
-    train_dataset = PolicyDataset(
-        embeddings_dir=str(train_dir),
-        chunk_size=model_cfg.get('chunk_size', 50),
-        normalize=data_cfg.get('normalize', True),
-        noise_std=data_cfg.get('noise_std', 0.05),
-        gripper_oversample=data_cfg.get('gripper_oversample', 1),
-        gripper_jitter=data_cfg.get('gripper_jitter', 0),
-        transition_weight=loss_cfg.get('transition_weight', 5.0),
-        transition_window=loss_cfg.get('transition_window', 10),
-        start_weight=loss_cfg.get('start_weight', 3.0),
-        start_steps=loss_cfg.get('start_steps', 10),
-        is_training=True,
-    )
+        # Create train dataset for this suite
+        train_dir = suite_dir / 'train'
+        if not train_dir.exists():
+            train_dir = suite_dir  # Fall back to non-split directory
 
-    # Create val dataset
-    val_dir = suite_dir / 'val'
-    if not val_dir.exists():
-        # If no val split, create a simple split from train
-        print("Warning: No val split found, using last 10% of train data")
-        val_dir = train_dir
+        if train_dir.exists() and len(list(train_dir.glob("*.pt"))) > 0:
+            train_datasets.append(PolicyDataset(
+                embeddings_dir=str(train_dir),
+                chunk_size=model_cfg.get('chunk_size', 50),
+                normalize=data_cfg.get('normalize', True),
+                noise_std=data_cfg.get('noise_std', 0.05),
+                gripper_oversample=data_cfg.get('gripper_oversample', 1),
+                gripper_jitter=data_cfg.get('gripper_jitter', 0),
+                transition_weight=loss_cfg.get('transition_weight', 5.0),
+                transition_window=loss_cfg.get('transition_window', 10),
+                start_weight=loss_cfg.get('start_weight', 3.0),
+                start_steps=loss_cfg.get('start_steps', 10),
+                is_training=True,
+            ))
 
-    val_dataset = PolicyDataset(
-        embeddings_dir=str(val_dir),
-        chunk_size=model_cfg.get('chunk_size', 50),
-        normalize=data_cfg.get('normalize', True),
-        noise_std=0.0,  # No noise for validation
-        gripper_oversample=1,  # No oversampling for validation
-        gripper_jitter=0,  # No jitter for validation
-        is_training=False,
-    )
+        # Create val dataset for this suite
+        val_dir = suite_dir / 'val'
+        if val_dir.exists() and len(list(val_dir.glob("*.pt"))) > 0:
+            val_datasets.append(PolicyDataset(
+                embeddings_dir=str(val_dir),
+                chunk_size=model_cfg.get('chunk_size', 50),
+                normalize=data_cfg.get('normalize', True),
+                noise_std=0.0,  # No noise for validation
+                gripper_oversample=1,  # No oversampling for validation
+                gripper_jitter=0,  # No jitter for validation
+                is_training=False,
+            ))
+
+    if len(train_datasets) == 0:
+        raise FileNotFoundError(f"No training data found for suites {suites} in {base_dir}")
+
+    # Combine datasets if multiple suites
+    if len(train_datasets) == 1:
+        train_dataset = train_datasets[0]
+    else:
+        train_dataset = CombinedDataset(train_datasets)
+        print(f"Combined {len(train_datasets)} suites for training")
+
+    if len(val_datasets) == 0:
+        print("Warning: No val split found, using train data for validation")
+        val_dataset = train_datasets[0] if len(train_datasets) == 1 else CombinedDataset([d for d in train_datasets])
+    elif len(val_datasets) == 1:
+        val_dataset = val_datasets[0]
+    else:
+        val_dataset = CombinedDataset(val_datasets)
+        print(f"Combined {len(val_datasets)} suites for validation")
 
     # Create dataloaders
     train_loader = DataLoader(

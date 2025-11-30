@@ -49,6 +49,7 @@ CLI Arguments:
 import argparse
 import torch
 import json
+import numpy as np
 from pathlib import Path
 import sys
 
@@ -56,7 +57,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vjepa_policy.models.policy import VJEPA2Policy
-from vjepa_policy.utils.evaluation import LIBEROEvaluator, VALID_SUITES
+from vjepa_policy.utils.evaluation import LIBEROEvaluatorSpatial, VALID_SUITES
 
 
 def main():
@@ -113,7 +114,10 @@ def main():
     # ========== Create Model ==========
     # Note: V-JEPA 2 encoder will be lazy-loaded on first use
     # This is required for evaluation (unlike training which uses precomputed embeddings)
+    use_goal_conditioned = model_cfg.get('use_goal_conditioned', False)
     print("Creating model...")
+    if use_goal_conditioned:
+        print("  Using GoalConditionedPolicyHead (goal-dependent action queries)")
     model = VJEPA2Policy(
         vjepa2_model_path=encoder_cfg.get('model_path', '/workspace/models/vjepa2-ac-vitg.pt'),
         vjepa2_model_name=encoder_cfg.get('model_name', 'vjepa2_vitg'),
@@ -128,6 +132,7 @@ def main():
         num_spatial_tokens=model_cfg.get('num_spatial_tokens', 64),
         action_dim=model_cfg.get('action_dim', 7),
         chunk_size=model_cfg.get('chunk_size', 50),
+        use_goal_conditioned=use_goal_conditioned,
         device=args.device,
     )
 
@@ -150,7 +155,7 @@ def main():
         # Create evaluator for this suite
         # LIBEROEvaluator handles environment creation, episode running, and success detection
         print(f"\nCreating evaluator for {suite}...")
-        evaluator = LIBEROEvaluator(
+        evaluator = LIBEROEvaluatorSpatial(
             model=model,
             device=args.device,
             video_len=encoder_cfg.get('num_frames', 16),
@@ -159,6 +164,8 @@ def main():
             execute_steps=args.execute_steps,
             max_episode_steps=args.max_steps,
             normalize_embeddings=data_cfg.get('normalize', True),
+            n_spatial_tokens=model_cfg.get('num_spatial_tokens', 64),
+            use_temporal_ensemble=True,  # Use temporal ensembling with majority vote for gripper
         )
 
         # Print evaluation configuration
@@ -176,35 +183,15 @@ def main():
         # Run evaluation
         results = evaluator.evaluate_suite(
             suite_name=suite,
-            n_episodes=args.n_episodes,
-            task_indices=args.tasks,
-            save_videos=args.save_videos,
-            video_dir=args.video_dir,
+            n_episodes_per_task=args.n_episodes,
+            verbose=True,
         )
 
         all_results[suite] = results
 
         # ========== Print Results for This Suite ==========
-        print()
-        print("-" * 40)
-        print(f"Results for {suite}")
-        print("-" * 40)
-
-        total_success = 0
-        total_episodes = 0
-
-        for task_idx in sorted(results.keys()):
-            task_results = results[task_idx]
-            successes = task_results.get('successes', task_results.get('success', []))
-            success = sum(successes)
-            n = len(successes)
-            rate = 100 * success / n if n > 0 else 0
-            print(f"  Task {task_idx}: {success}/{n} ({rate:.1f}%)")
-            total_success += success
-            total_episodes += n
-
-        overall = 100 * total_success / total_episodes if total_episodes > 0 else 0
-        print(f"  Overall: {total_success}/{total_episodes} ({overall:.1f}%)")
+        # Results are already printed by evaluator.evaluate_suite()
+        # Just store for final summary
 
     # ========== Print Final Summary ==========
     print()
@@ -212,34 +199,37 @@ def main():
     print("Final Summary")
     print("=" * 60)
 
-    grand_total_success = 0
-    grand_total_episodes = 0
-
     for suite, results in all_results.items():
-        total_success = 0
-        total_episodes = 0
-        for task_results in results.values():
-            successes = task_results.get('successes', task_results.get('success', []))
-            total_success += sum(successes)
-            total_episodes += len(successes)
-        rate = 100 * total_success / total_episodes if total_episodes > 0 else 0
-        print(f"{suite}: {total_success}/{total_episodes} ({rate:.1f}%)")
-        grand_total_success += total_success
-        grand_total_episodes += total_episodes
+        rate = results.get('overall_success_rate', 0) * 100
+        print(f"{suite}: {rate:.1f}%")
 
     if len(suites) > 1:
-        overall = 100 * grand_total_success / grand_total_episodes if grand_total_episodes > 0 else 0
-        print(f"\nTotal: {grand_total_success}/{grand_total_episodes} ({overall:.1f}%)")
+        avg_rate = sum(r.get('overall_success_rate', 0) for r in all_results.values()) / len(all_results) * 100
+        print(f"\nAverage: {avg_rate:.1f}%")
 
     # ========== Save Results ==========
     if args.save_results:
+        # Convert numpy types for JSON serialization
+        def convert_numpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, (np.float32, np.float64, np.floating)):
+                return float(obj)
+            elif isinstance(obj, (np.int32, np.int64, np.integer)):
+                return int(obj)
+            elif isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(v) for v in obj]
+            return obj
+
         results_data = {
             'checkpoint': str(args.checkpoint),
             'suites': suites,
             'n_episodes': args.n_episodes,
             'execute_steps': args.execute_steps,
             'max_steps': args.max_steps,
-            'results': {k: {str(tk): tv for tk, tv in v.items()} for k, v in all_results.items()},
+            'results': convert_numpy(all_results),
         }
         with open(args.save_results, 'w') as f:
             json.dump(results_data, f, indent=2, default=str)

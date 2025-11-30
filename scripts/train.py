@@ -179,14 +179,10 @@ def main():
     print("=" * 60)
     print()
 
-    # ========== Initialize W&B ==========
+    # ========== W&B Settings ==========
     use_wandb = WANDB_AVAILABLE and not args.no_wandb
-    if use_wandb:
-        wandb.init(
-            project=config.get('logging', {}).get('wandb_project', 'vjepa2-policy'),
-            config=config,
-            name=args.run_name or f"{config['data'].get('suite', 'libero')}_training",
-        )
+    wandb_project = config.get('logging', {}).get('wandb_project', 'vjepa2-policy') if use_wandb else None
+    wandb_run_name = args.run_name or f"{config['data'].get('suite', 'libero')}_training"
 
     # ========== Create Dataloaders ==========
     print("Loading data...")
@@ -205,7 +201,10 @@ def main():
     # ========== Create Model ==========
     # Note: V-JEPA 2 encoder is lazy-loaded and NOT used during training
     # (we use precomputed embeddings). It's only loaded during evaluation.
+    use_goal_conditioned = config['model'].get('use_goal_conditioned', False)
     print("Creating model...")
+    if use_goal_conditioned:
+        print("  Using GoalConditionedPolicyHead (goal-dependent action queries)")
     model = VJEPA2Policy(
         vjepa2_model_path=config.get('encoder', {}).get('model_path', '/workspace/models/vjepa2-ac-vitg.pt'),
         vjepa2_model_name=config.get('encoder', {}).get('model_name', 'vjepa2_vitg'),
@@ -221,6 +220,7 @@ def main():
         action_dim=config['model'].get('action_dim', 7),
         chunk_size=config['model'].get('chunk_size', 50),
         dropout=config['model'].get('dropout', 0.1),
+        use_goal_conditioned=use_goal_conditioned,
         device=device,
     )
 
@@ -242,15 +242,15 @@ def main():
         config=config,
         device=device,
         save_dir=save_dir,
-        use_wandb=use_wandb,
+        use_wandb=False,  # Let train() initialize W&B
     )
 
     # ========== Train ==========
-    trainer.train(config['training']['epochs'])
-
-    # ========== Cleanup ==========
-    if use_wandb:
-        wandb.finish()
+    trainer.train(
+        epochs=config['training']['epochs'],
+        wandb_project=wandb_project,
+        wandb_run_name=wandb_run_name,
+    )
 
     print()
     print(f"Training complete!")

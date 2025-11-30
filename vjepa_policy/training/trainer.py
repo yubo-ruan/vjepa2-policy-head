@@ -7,6 +7,7 @@ Clean training loop that works with precomputed spatial embeddings.
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast, GradScaler
 from typing import Dict, Optional, List
 from tqdm import tqdm
 from pathlib import Path
@@ -79,6 +80,10 @@ class Trainer:
         self.save_every = train_cfg.get('save_every', 10)
         self.log_every = train_cfg.get('log_every', 10)
 
+        # Mixed precision training
+        self.use_amp = train_cfg.get('use_amp', True) and device == 'cuda'
+        self.scaler = GradScaler() if self.use_amp else None
+
         # Set seed
         seed = train_cfg.get('seed', 42)
         set_seed(seed)
@@ -132,29 +137,41 @@ class Trainer:
             if weights is not None:
                 weights = weights.to(self.device)
 
-            # Forward pass
-            if hasattr(self.model, 'forward_with_precomputed'):
-                pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
-            else:
-                pred = self.model(video_tokens, goal_tokens, proprio)
-
-            # Compute loss
-            losses = self.loss_fn(pred, actions, weights)
-            loss = losses['loss']
-
-            # Backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
-
-            # Gradient clipping
-            if self.grad_clip > 0:
-                if hasattr(self.model, 'get_trainable_params'):
-                    params = self.model.get_trainable_params()
+            # Forward pass with optional mixed precision
+            with autocast(enabled=self.use_amp):
+                if hasattr(self.model, 'forward_with_precomputed'):
+                    pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
                 else:
-                    params = self.model.parameters()
-                torch.nn.utils.clip_grad_norm_(params, self.grad_clip)
+                    pred = self.model(video_tokens, goal_tokens, proprio)
 
-            self.optimizer.step()
+                # Compute loss
+                losses = self.loss_fn(pred, actions, weights)
+                loss = losses['loss']
+
+            # Backward pass with gradient scaling for AMP
+            self.optimizer.zero_grad()
+            if self.use_amp:
+                self.scaler.scale(loss).backward()
+                # Gradient clipping with scaler
+                if self.grad_clip > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    if hasattr(self.model, 'get_trainable_params'):
+                        params = self.model.get_trainable_params()
+                    else:
+                        params = self.model.parameters()
+                    torch.nn.utils.clip_grad_norm_(params, self.grad_clip)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                # Gradient clipping
+                if self.grad_clip > 0:
+                    if hasattr(self.model, 'get_trainable_params'):
+                        params = self.model.get_trainable_params()
+                    else:
+                        params = self.model.parameters()
+                    torch.nn.utils.clip_grad_norm_(params, self.grad_clip)
+                self.optimizer.step()
 
             # Logging
             total_loss += loss.item()
@@ -201,15 +218,19 @@ class Trainer:
             goal_tokens = batch['goal_tokens'].to(self.device)
             proprio = batch['proprio'].to(self.device)
             actions = batch['actions'].to(self.device)
+            weights = batch.get('weights')
+            if weights is not None:
+                weights = weights.to(self.device)
 
-            # Forward pass
-            if hasattr(self.model, 'forward_with_precomputed'):
-                pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
-            else:
-                pred = self.model(video_tokens, goal_tokens, proprio)
+            # Forward pass with optional mixed precision
+            with autocast(enabled=self.use_amp):
+                if hasattr(self.model, 'forward_with_precomputed'):
+                    pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
+                else:
+                    pred = self.model(video_tokens, goal_tokens, proprio)
 
-            # Compute loss (no weights for validation)
-            losses = self.loss_fn(pred, actions)
+                # Compute loss (use weights for consistency with training)
+                losses = self.loss_fn(pred, actions, weights)
             total_loss += losses['loss'].item()
             n_batches += 1
 
@@ -259,8 +280,28 @@ class Trainer:
         print(f"Loaded checkpoint: {path}")
         return checkpoint.get('epoch', 0)
 
-    def train(self, epochs: int):
-        """Full training loop."""
+    def train(self, epochs: int, wandb_project: Optional[str] = None, wandb_run_name: Optional[str] = None):
+        """Full training loop.
+
+        Args:
+            epochs: Number of epochs to train
+            wandb_project: W&B project name (enables W&B if provided)
+            wandb_run_name: W&B run name (optional)
+        """
+        # Initialize W&B if requested
+        if wandb_project and WANDB_AVAILABLE:
+            self.use_wandb = True
+            wandb.init(
+                project=wandb_project,
+                name=wandb_run_name,
+                config=self.config,
+            )
+            # Log model architecture info
+            if hasattr(self.model, 'policy_head'):
+                wandb.config.update({
+                    'trainable_params': sum(p.numel() for p in self.model.parameters() if p.requires_grad) / 1e6,
+                })
+            print(f"W&B initialized: {wandb.run.url}")
 
         # Create scheduler
         if self.warmup_epochs < epochs:
@@ -279,6 +320,8 @@ class Trainer:
             print(f"Val batches: {len(self.val_loader)}")
         print(f"Warmup epochs: {self.warmup_epochs}")
         print(f"Learning rate: {self.lr}")
+        print(f"Mixed Precision (AMP): {self.use_amp}")
+        print(f"W&B Logging: {self.use_wandb}")
         print(f"Save directory: {self.save_dir}")
         print("=" * 60)
         print()
@@ -321,9 +364,30 @@ class Trainer:
             best_str = " [BEST]" if is_best else ""
             print(f"Epoch {epoch:3d} | Train: {train_metrics['loss']:.4f}{val_str} | Time: {elapsed:.1f}s{best_str}")
 
+            # Log epoch-level metrics to W&B
+            if self.use_wandb:
+                epoch_metrics = {
+                    'epoch': epoch,
+                    'epoch/train_loss': train_metrics['loss'],
+                    'epoch/pos_loss': train_metrics.get('pos_loss', 0),
+                    'epoch/gripper_loss': train_metrics.get('gripper_loss', 0),
+                    'epoch/lr': self.optimizer.param_groups[0]['lr'],
+                    'epoch/time': elapsed,
+                }
+                if val_metrics:
+                    epoch_metrics['epoch/val_loss'] = val_metrics['loss']
+                    epoch_metrics['epoch/best_val_loss'] = self.best_val_loss
+                wandb.log(epoch_metrics)
+
         print()
         print("=" * 60)
         print("Training Complete!")
         print(f"Best val loss: {self.best_val_loss:.4f}")
         print(f"Best model: {self.save_dir / 'best_model.pt'}")
         print("=" * 60)
+
+        # Finish W&B run
+        if self.use_wandb:
+            wandb.summary['best_val_loss'] = self.best_val_loss
+            wandb.summary['final_train_loss'] = train_metrics['loss']
+            wandb.finish()

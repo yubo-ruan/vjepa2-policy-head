@@ -1,6 +1,8 @@
-# V-JEPA 2 Policy Configuration - v3 Conservative
-# Single unified config file - spatial tokens only (no mean pooling)
-# All settings in one place
+# V-JEPA 2 Policy Configuration - v5 Multi-Suite Training
+# Key changes:
+# - Training on combined libero_spatial + libero_object data
+# - Standard architecture (no goal-conditioned queries)
+# - More data diversity to improve generalization
 
 # Model Architecture (Spatial tokens only - 64 tokens per modality)
 model:
@@ -14,6 +16,7 @@ model:
   proprio_dim: 15              # Proprioception dimensions
   proprio_history: 5           # Proprioception history length
   dropout: 0.1                 # Dropout rate
+  use_goal_conditioned: false  # Standard architecture (v4's approach didn't help)
 
 # V-JEPA 2 Encoder Configuration
 encoder:
@@ -24,31 +27,34 @@ encoder:
   image_size: 256
   target_spatial: 8            # Spatial downsampling to 8x8
 
-# Data Configuration
+# Data Configuration - MULTI-SUITE
 data:
   embeddings_dir: /workspace/data/embeddings
   libero_path: /workspace/data/libero
-  suite: libero_spatial
+  # NEW: Train on multiple suites for more data diversity
+  suites:
+    - libero_spatial
+    - libero_object
   train_split: 0.9
-  # Embedding augmentation (keep these - they work)
+  # Embedding augmentation
   normalize: true              # L2 normalize embeddings
   noise_std: 0.05              # Gaussian noise during training
-  # Gripper augmentation - MORE CONSERVATIVE
-  gripper_oversample: 2        # Was 5 → Now 2 (less aggressive)
-  gripper_jitter: 0            # Was 5 → Now 0 (DISABLE for now)
-  # Static frame augmentation (keep these - they help)
+  # Gripper augmentation - conservative settings
+  gripper_oversample: 2        # Oversample gripper transitions
+  gripper_jitter: 0            # Disabled for stability
+  # Static frame augmentation
   static_prob: 0.25            # Probability of fully static video
   beginning_prob: 0.25         # Probability of beginning-biased sampling
   max_beginning_frame: 30      # Max frame for beginning sampling
 
-# Loss Configuration - MORE CONSERVATIVE
+# Loss Configuration
 loss:
-  start_weight: 2.0            # Was 3.0 → Now 2.0
+  start_weight: 2.0            # Weight for initial timesteps
   start_steps: 10              # How many initial steps to upweight
-  transition_weight: 3.0       # Was 5.0 → Now 3.0
-  transition_window: 5         # Was 10 → Now 5 (tighter window)
+  transition_weight: 3.0       # Weight for gripper transitions
+  transition_window: 5         # Window around transitions
   balance_gripper: true        # Balance OPEN vs CLOSE samples
-  gripper_loss_weight: 1.5     # Was 2.0 → Now 1.5
+  gripper_loss_weight: 1.5     # Gripper loss weight
   gripper_dim: 6               # Index of gripper in action vector
 
 # Training Configuration
@@ -59,9 +65,11 @@ training:
   weight_decay: 1.0e-5
   warmup_epochs: 5
   grad_clip: 1.0
+  use_amp: true                # Mixed precision training
   seed: 42
   num_workers: 4
   save_every: 10               # Save checkpoint every N epochs
+  log_every: 10                # Log metrics every N steps
 
 # Evaluation Configuration
 evaluation:
@@ -73,10 +81,9 @@ evaluation:
   suites:
     - libero_object
     - libero_spatial
-    - libero_goal
 
 # Logging Configuration
 logging:
   wandb_project: "vjepa2-policy"
   log_every: 10
-  checkpoint_dir: /workspace/checkpoints_v3
+  checkpoint_dir: /workspace/checkpoints_v5

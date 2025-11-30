@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 from tqdm import tqdm
 import json
-from collections import defaultdict
+from collections import defaultdict, deque
 
 # LIBERO imports
 try:
@@ -207,9 +207,9 @@ class LIBEROEvaluator:
         """
         obs = env.reset()
 
-        # Initialize buffers
-        frame_buffer = []  # For video encoding
-        proprio_buffer = []  # For proprio history
+        # Initialize buffers using deque for O(1) operations
+        frame_buffer = deque(maxlen=self.video_len)
+        proprio_buffer = deque(maxlen=self.proprio_history)
         action_buffer = []  # Remaining actions from last chunk
         all_actions = []  # All executed actions
 
@@ -221,26 +221,20 @@ class LIBEROEvaluator:
             current_image = obs['agentview_image']
             current_proprio = self.extract_proprio(obs)
 
-            # Update buffers
+            # Update buffers (deque automatically handles maxlen)
             frame_buffer.append(current_image)
             proprio_buffer.append(current_proprio)
 
-            # Trim buffers to required length
-            if len(frame_buffer) > self.video_len:
-                frame_buffer.pop(0)
-            if len(proprio_buffer) > self.proprio_history:
-                proprio_buffer.pop(0)
-
-            # Pad if not enough history
+            # Pad if not enough history (only at start of episode)
             while len(frame_buffer) < self.video_len:
-                frame_buffer.insert(0, frame_buffer[0])
+                frame_buffer.appendleft(frame_buffer[0])
             while len(proprio_buffer) < self.proprio_history:
-                proprio_buffer.insert(0, proprio_buffer[0])
+                proprio_buffer.appendleft(proprio_buffer[0])
 
             # Get action (replan if buffer empty)
             if len(action_buffer) == 0:
-                # Prepare inputs
-                video = np.stack(frame_buffer)  # (T, H, W, C)
+                # Prepare inputs (convert deque to list for np.stack)
+                video = np.stack(list(frame_buffer))  # (T, H, W, C)
                 video_tensor = torch.from_numpy(video).permute(0, 3, 1, 2).float() / 255.0
                 video_tensor = video_tensor.unsqueeze(0).to(self.device)  # (1, T, C, H, W)
 
@@ -254,7 +248,7 @@ class LIBEROEvaluator:
                     )
                     video_tensor = video_tensor.view(B, T, C, self.image_size, self.image_size)
 
-                proprio = np.stack(proprio_buffer)  # (history, proprio_dim)
+                proprio = np.stack(list(proprio_buffer))  # (history, proprio_dim)
                 proprio_tensor = torch.from_numpy(proprio).float()
                 proprio_tensor = proprio_tensor.unsqueeze(0).to(self.device)  # (1, history, dim)
 
@@ -593,9 +587,9 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
         """
         obs = env.reset()
 
-        # Initialize buffers
-        frame_buffer = []
-        proprio_buffer = []
+        # Initialize buffers using deque for O(1) operations
+        frame_buffer = deque(maxlen=self.video_len)
+        proprio_buffer = deque(maxlen=self.proprio_history)
         all_actions = []
 
         # Temporal ensembling: store predictions for each future timestep
@@ -609,25 +603,22 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
             current_image = obs['agentview_image']
             current_proprio = self.extract_proprio(obs)
 
+            # Update buffers (deque automatically handles maxlen)
             frame_buffer.append(current_image)
             proprio_buffer.append(current_proprio)
 
-            if len(frame_buffer) > self.video_len:
-                frame_buffer.pop(0)
-            if len(proprio_buffer) > self.proprio_history:
-                proprio_buffer.pop(0)
-
+            # Pad if not enough history (only at start of episode)
             while len(frame_buffer) < self.video_len:
-                frame_buffer.insert(0, frame_buffer[0])
+                frame_buffer.appendleft(frame_buffer[0])
             while len(proprio_buffer) < self.proprio_history:
-                proprio_buffer.insert(0, proprio_buffer[0])
+                proprio_buffer.appendleft(proprio_buffer[0])
 
             # Decide if we need to replan
             need_replan = (step % self.execute_steps == 0) or (step not in action_history)
 
             if need_replan:
-                # Prepare inputs
-                video = np.stack(frame_buffer)
+                # Prepare inputs (convert deque to list for np.stack)
+                video = np.stack(list(frame_buffer))
                 video_tensor = torch.from_numpy(video).permute(0, 3, 1, 2).float() / 255.0
                 video_tensor = video_tensor.unsqueeze(0).to(self.device)
 
@@ -640,7 +631,7 @@ class LIBEROEvaluatorSpatial(LIBEROEvaluator):
                     )
                     video_tensor = video_tensor.view(B, T, C, self.image_size, self.image_size)
 
-                proprio = np.stack(proprio_buffer)
+                proprio = np.stack(list(proprio_buffer))
                 proprio_tensor = torch.from_numpy(proprio).float()
                 proprio_tensor = proprio_tensor.unsqueeze(0).to(self.device)
 

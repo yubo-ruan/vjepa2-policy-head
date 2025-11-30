@@ -7,6 +7,7 @@ No mean-pooling variants - this is the only architecture.
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 import math
 from typing import Dict, List, Optional
 
@@ -98,6 +99,7 @@ class PolicyHead(nn.Module):
         proprio_dim: int = 256,
         n_proprio_tokens: int = 4,
         dropout: float = 0.1,
+        use_gradient_checkpointing: bool = True,
     ):
         super().__init__()
 
@@ -106,6 +108,7 @@ class PolicyHead(nn.Module):
         self.chunk_size = chunk_size
         self.action_dim = action_dim
         self.n_proprio_tokens = n_proprio_tokens
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         # Project spatial tokens from embed_dim to hidden_dim
         self.video_proj = nn.Sequential(
@@ -130,8 +133,10 @@ class PolicyHead(nn.Module):
         self.goal_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
         self.proprio_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
 
-        # Learnable spatial position embeddings for video and goal
-        self.spatial_pos = nn.Parameter(torch.randn(1, num_spatial_tokens, hidden_dim) * 0.02)
+        # Separate learnable spatial position embeddings for video and goal
+        # (they represent different spatial contexts so should have separate embeddings)
+        self.video_spatial_pos = nn.Parameter(torch.randn(1, num_spatial_tokens, hidden_dim) * 0.02)
+        self.goal_spatial_pos = nn.Parameter(torch.randn(1, num_spatial_tokens, hidden_dim) * 0.02)
 
         # Learnable action queries
         self.action_queries = nn.Parameter(torch.randn(chunk_size, hidden_dim) * 0.02)
@@ -174,6 +179,10 @@ class PolicyHead(nn.Module):
                 nn.init.ones_(module.weight)
                 nn.init.zeros_(module.bias)
 
+    def _transformer_forward(self, queries: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        """Transformer forward - separate method for gradient checkpointing."""
+        return self.transformer(tgt=queries, memory=context)
+
     def forward(
         self,
         video_tokens: torch.Tensor,
@@ -194,8 +203,9 @@ class PolicyHead(nn.Module):
         B = video_tokens.shape[0]
 
         # Project spatial tokens: (B, 64, embed_dim) -> (B, 64, hidden_dim)
-        video_proj = self.video_proj(video_tokens) + self.video_emb + self.spatial_pos
-        goal_proj = self.goal_proj(goal_tokens) + self.goal_emb + self.spatial_pos
+        # Use separate spatial embeddings for video and goal
+        video_proj = self.video_proj(video_tokens) + self.video_emb + self.video_spatial_pos
+        goal_proj = self.goal_proj(goal_tokens) + self.goal_emb + self.goal_spatial_pos
 
         # Project proprio: (B, proprio_dim) -> (B, n_proprio_tokens, hidden_dim)
         proprio_proj = self.proprio_proj(proprio_emb).view(B, self.n_proprio_tokens, self.hidden_dim)
@@ -208,8 +218,205 @@ class PolicyHead(nn.Module):
         queries = self.action_queries.unsqueeze(0).expand(B, -1, -1)
         queries = self.pos_encoding(queries)
 
+        # Transformer decoder with optional gradient checkpointing
+        if self.use_gradient_checkpointing and self.training:
+            action_features = checkpoint(self._transformer_forward, queries, context, use_reentrant=False)
+        else:
+            action_features = self.transformer(tgt=queries, memory=context)
+
+        # Predict actions with scaled tanh to prevent saturation
+        raw_actions = self.action_head(action_features)
+        actions = torch.tanh(raw_actions * self.output_scale)
+
+        return actions
+
+
+class GoalConditionedPolicyHead(nn.Module):
+    """
+    Goal-Conditioned Policy Head with goal-dependent action queries.
+
+    Key difference from PolicyHead: Action queries are conditioned on the goal,
+    forcing the model to consider the goal when generating actions.
+
+    The goal conditioning is achieved by:
+    1. Creating a goal summary from the goal tokens
+    2. Projecting the summary to query conditioning
+    3. Adding the conditioning to the action queries
+
+    This prevents the model from learning "default behaviors" that ignore the goal.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 1408,
+        hidden_dim: int = 512,
+        num_layers: int = 4,
+        num_heads: int = 8,
+        num_spatial_tokens: int = 64,
+        chunk_size: int = 50,
+        action_dim: int = 7,
+        proprio_dim: int = 256,
+        n_proprio_tokens: int = 4,
+        dropout: float = 0.1,
+        use_gradient_checkpointing: bool = True,
+    ):
+        super().__init__()
+
+        self.hidden_dim = hidden_dim
+        self.num_spatial_tokens = num_spatial_tokens
+        self.chunk_size = chunk_size
+        self.action_dim = action_dim
+        self.n_proprio_tokens = n_proprio_tokens
+        self.use_gradient_checkpointing = use_gradient_checkpointing
+
+        # Project spatial tokens from embed_dim to hidden_dim
+        self.video_proj = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        self.goal_proj = nn.Sequential(
+            nn.Linear(embed_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        # Proprio projection: (B, proprio_dim) -> (B, n_proprio_tokens, hidden_dim)
+        self.proprio_proj = nn.Sequential(
+            nn.Linear(proprio_dim, hidden_dim * n_proprio_tokens),
+            nn.LayerNorm(hidden_dim * n_proprio_tokens),
+            nn.GELU(),
+        )
+
+        # Learnable modality embeddings (added to each token)
+        self.video_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.goal_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+        self.proprio_emb = nn.Parameter(torch.randn(1, 1, hidden_dim) * 0.02)
+
+        # Separate learnable spatial position embeddings for video and goal
+        self.video_spatial_pos = nn.Parameter(torch.randn(1, num_spatial_tokens, hidden_dim) * 0.02)
+        self.goal_spatial_pos = nn.Parameter(torch.randn(1, num_spatial_tokens, hidden_dim) * 0.02)
+
+        # Learnable action queries
+        self.action_queries = nn.Parameter(torch.randn(chunk_size, hidden_dim) * 0.02)
+        self.pos_encoding = PositionalEncoding(hidden_dim, max_len=chunk_size)
+
+        # ========== GOAL-CONDITIONED QUERIES (Key change) ==========
+        # Project goal summary to query conditioning
+        # This forces the model to consider the goal when generating actions
+        self.goal_projector = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+        # Optional: Goal-video cross-attention for explicit comparison
+        self.goal_video_attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.goal_video_norm = nn.LayerNorm(hidden_dim)
+        # ============================================================
+
         # Transformer decoder
-        action_features = self.transformer(tgt=queries, memory=context)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,  # Pre-norm for better training stability
+            activation='gelu',
+        )
+        self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+
+        # Action output head
+        self.action_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, action_dim),
+        )
+
+        # Learnable output scale - starts small to prevent tanh saturation
+        self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights with small values for stable training."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+
+    def _transformer_forward(self, queries: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        """Transformer forward - separate method for gradient checkpointing."""
+        return self.transformer(tgt=queries, memory=context)
+
+    def forward(
+        self,
+        video_tokens: torch.Tensor,
+        goal_tokens: torch.Tensor,
+        proprio_emb: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Forward pass with goal-conditioned queries.
+
+        Args:
+            video_tokens: (B, 64, embed_dim) spatial video features
+            goal_tokens: (B, 64, embed_dim) spatial goal features
+            proprio_emb: (B, proprio_dim) encoded proprioception
+
+        Returns:
+            actions: (B, chunk_size, action_dim) predicted actions
+        """
+        B = video_tokens.shape[0]
+
+        # Project spatial tokens: (B, 64, embed_dim) -> (B, 64, hidden_dim)
+        video_proj = self.video_proj(video_tokens) + self.video_emb + self.video_spatial_pos
+        goal_proj = self.goal_proj(goal_tokens) + self.goal_emb + self.goal_spatial_pos
+
+        # ========== GOAL-CONDITIONED QUERIES ==========
+        # Create goal summary by mean-pooling the projected goal tokens
+        goal_summary = goal_proj.mean(dim=1)  # (B, hidden_dim)
+
+        # Project goal summary to query conditioning
+        query_conditioning = self.goal_projector(goal_summary)  # (B, hidden_dim)
+
+        # Prepare action queries and add goal conditioning
+        queries = self.action_queries.unsqueeze(0).expand(B, -1, -1)  # (B, chunk_size, hidden_dim)
+        queries = queries + query_conditioning.unsqueeze(1)  # Broadcast add: (B, chunk_size, hidden_dim)
+        queries = self.pos_encoding(queries)
+
+        # Optional: Goal-video cross-attention to capture explicit comparison
+        # This allows the model to attend to goal-relevant parts of the video
+        video_with_goal_context, _ = self.goal_video_attention(
+            query=video_proj,
+            key=goal_proj,
+            value=goal_proj,
+        )
+        video_proj = self.goal_video_norm(video_proj + video_with_goal_context)
+        # ================================================
+
+        # Project proprio: (B, proprio_dim) -> (B, n_proprio_tokens, hidden_dim)
+        proprio_proj = self.proprio_proj(proprio_emb).view(B, self.n_proprio_tokens, self.hidden_dim)
+        proprio_proj = proprio_proj + self.proprio_emb
+
+        # Concatenate all context tokens: 64 + 64 + n_proprio = 132 tokens
+        context = torch.cat([video_proj, goal_proj, proprio_proj], dim=1)
+
+        # Transformer decoder with optional gradient checkpointing
+        if self.use_gradient_checkpointing and self.training:
+            action_features = checkpoint(self._transformer_forward, queries, context, use_reentrant=False)
+        else:
+            action_features = self.transformer(tgt=queries, memory=context)
 
         # Predict actions with scaled tanh to prevent saturation
         raw_actions = self.action_head(action_features)
@@ -253,6 +460,8 @@ class VJEPA2Policy(nn.Module):
         action_dim: int = 7,
         chunk_size: int = 50,
         dropout: float = 0.1,
+        # Goal conditioning
+        use_goal_conditioned: bool = False,
         # Device
         device: str = "cuda",
     ):
@@ -262,6 +471,7 @@ class VJEPA2Policy(nn.Module):
         self.chunk_size = chunk_size
         self.action_dim = action_dim
         self.num_spatial_tokens = num_spatial_tokens
+        self.use_goal_conditioned = use_goal_conditioned
 
         # V-JEPA 2 encoder (lazy load to avoid import issues during testing)
         self._vjepa2 = None
@@ -279,8 +489,9 @@ class VJEPA2Policy(nn.Module):
             output_dim=proprio_output_dim,
         )
 
-        # Policy head for spatial tokens
-        self.policy_head = PolicyHead(
+        # Policy head - choose between regular and goal-conditioned
+        PolicyHeadClass = GoalConditionedPolicyHead if use_goal_conditioned else PolicyHead
+        self.policy_head = PolicyHeadClass(
             embed_dim=embed_dim,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -463,6 +674,7 @@ def create_model(config: dict, device: str = "cuda") -> VJEPA2Policy:
         action_dim=model_cfg.get('action_dim', 7),
         chunk_size=model_cfg.get('chunk_size', 50),
         dropout=model_cfg.get('dropout', 0.1),
+        use_goal_conditioned=model_cfg.get('use_goal_conditioned', False),
         device=device,
     )
 
@@ -472,7 +684,14 @@ def test_policy_head():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Testing on device: {device}")
 
-    # Create policy head
+    # Test inputs - spatial tokens
+    B = 4
+    video_tokens = torch.rand(B, 64, 1408).to(device)
+    goal_tokens = torch.rand(B, 64, 1408).to(device)
+    proprio_emb = torch.rand(B, 256).to(device)
+
+    # Test regular PolicyHead
+    print("\n=== Testing PolicyHead ===")
     policy = PolicyHead(
         embed_dim=1408,
         hidden_dim=512,
@@ -483,29 +702,44 @@ def test_policy_head():
         action_dim=7,
     ).to(device)
 
-    # Test inputs - spatial tokens
-    B = 4
-    video_tokens = torch.rand(B, 64, 1408).to(device)
-    goal_tokens = torch.rand(B, 64, 1408).to(device)
-    proprio_emb = torch.rand(B, 256).to(device)
-
-    # Forward pass
     actions = policy(video_tokens, goal_tokens, proprio_emb)
-
-    print(f"Video tokens shape: {video_tokens.shape}")
-    print(f"Goal tokens shape: {goal_tokens.shape}")
-    print(f"Proprio emb shape: {proprio_emb.shape}")
     print(f"Actions shape: {actions.shape}")
-
-    # Check action bounds
     assert actions.min() >= -1.0 and actions.max() <= 1.0, "Actions out of bounds!"
     print(f"Action range: [{actions.min():.3f}, {actions.max():.3f}]")
 
-    # Count parameters
     n_params = sum(p.numel() for p in policy.parameters())
     print(f"Parameters: {n_params / 1e6:.2f}M")
 
-    print("\nPolicy head test passed!")
+    # Test GoalConditionedPolicyHead
+    print("\n=== Testing GoalConditionedPolicyHead ===")
+    gc_policy = GoalConditionedPolicyHead(
+        embed_dim=1408,
+        hidden_dim=512,
+        num_layers=4,
+        num_heads=8,
+        num_spatial_tokens=64,
+        chunk_size=50,
+        action_dim=7,
+    ).to(device)
+
+    gc_actions = gc_policy(video_tokens, goal_tokens, proprio_emb)
+    print(f"Actions shape: {gc_actions.shape}")
+    assert gc_actions.min() >= -1.0 and gc_actions.max() <= 1.0, "Actions out of bounds!"
+    print(f"Action range: [{gc_actions.min():.3f}, {gc_actions.max():.3f}]")
+
+    gc_params = sum(p.numel() for p in gc_policy.parameters())
+    print(f"Parameters: {gc_params / 1e6:.2f}M")
+    print(f"Additional params from goal conditioning: {(gc_params - n_params) / 1e6:.2f}M")
+
+    # Test that different goals produce different actions
+    print("\n=== Testing goal sensitivity ===")
+    goal_tokens_2 = torch.rand(B, 64, 1408).to(device)
+    gc_actions_2 = gc_policy(video_tokens, goal_tokens_2, proprio_emb)
+    action_diff = (gc_actions - gc_actions_2).abs().mean().item()
+    print(f"Mean action difference with different goals: {action_diff:.4f}")
+    assert action_diff > 0.01, "Goal-conditioned policy should produce different actions for different goals!"
+
+    print("\nAll policy head tests passed!")
 
 
 if __name__ == "__main__":
