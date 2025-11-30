@@ -1,20 +1,21 @@
 """
-Training Loop
+Simplified Training Loop for V-JEPA 2 Policy.
 
-Handles training of the V-JEPA 2 policy model.
+Clean training loop that works with precomputed spatial embeddings.
 """
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from tqdm import tqdm
 from pathlib import Path
 import random
 import numpy as np
+import time
 
-from .losses import WeightedActionLoss, L1ActionLoss, get_loss_fn
+from .loss import ActionLoss, create_loss
+
 
 # Optional wandb
 try:
@@ -25,7 +26,7 @@ except ImportError:
 
 
 def set_seed(seed: int):
-    """Set random seed for reproducibility"""
+    """Set random seed for reproducibility."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -35,7 +36,19 @@ def set_seed(seed: int):
 
 class Trainer:
     """
-    Trainer for V-JEPA 2 policy.
+    Simplified trainer for V-JEPA 2 policy.
+
+    Works with precomputed spatial embeddings only.
+
+    Args:
+        model: Policy model (VJEPA2Policy or similar)
+        train_loader: Training dataloader
+        val_loader: Validation dataloader
+        loss_fn: Loss function (optional, created from config if not provided)
+        config: Configuration dict
+        device: Device to train on
+        save_dir: Directory to save checkpoints
+        use_wandb: Enable W&B logging
     """
 
     def __init__(
@@ -43,145 +56,90 @@ class Trainer:
         model: nn.Module,
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
-        lr: float = 1e-4,
-        weight_decay: float = 1e-5,
-        warmup_epochs: int = 5,
-        grad_clip: float = 1.0,
-        device: str = "cuda",
-        log_every: int = 10,
-        save_dir: str = "checkpoints",
-        use_wandb: bool = True,
-        use_precomputed: bool = False,
-        seed: int = 42,
-        # Loss configuration
-        loss_type: str = "weighted",
-        start_weight: float = 3.0,
-        start_timesteps: int = 10,
-        gripper_transition_weight: float = 5.0,
-        gripper_dim: int = 6,
+        loss_fn: Optional[ActionLoss] = None,
+        config: Optional[dict] = None,
+        device: str = 'cuda',
+        save_dir: str = 'checkpoints',
+        use_wandb: bool = False,
     ):
-        self.model = model
+        self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
-        self.log_every = log_every
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
         self.use_wandb = use_wandb and WANDB_AVAILABLE
-        self.use_precomputed = use_precomputed
-        self.grad_clip = grad_clip
-        self.warmup_epochs = warmup_epochs
-        self.lr = lr
+        self.config = config or {}
+
+        # Get training config
+        train_cfg = self.config.get('training', {})
+        self.lr = train_cfg.get('lr', 1e-4)
+        self.warmup_epochs = train_cfg.get('warmup_epochs', 5)
+        self.grad_clip = train_cfg.get('grad_clip', 1.0)
+        self.save_every = train_cfg.get('save_every', 10)
+        self.log_every = train_cfg.get('log_every', 10)
 
         # Set seed
+        seed = train_cfg.get('seed', 42)
         set_seed(seed)
 
         # Loss function
-        self.loss_fn = get_loss_fn(
-            loss_type=loss_type,
-            start_weight=start_weight,
-            start_timesteps=start_timesteps,
-            gripper_transition_weight=gripper_transition_weight,
-            gripper_dim=gripper_dim,
-        )
-        self.loss_type = loss_type
-        print(f"Using loss: {loss_type}")
-        if loss_type == "weighted":
-            print(f"  start_weight: {start_weight}x for first {start_timesteps} timesteps")
-            print(f"  gripper_transition_weight: {gripper_transition_weight}x")
+        if loss_fn is None:
+            loss_fn = create_loss(self.config)
+        self.loss_fn = loss_fn
 
-        # Optimizer (only trainable params)
+        # Optimizer - get trainable params from model
+        if hasattr(model, 'get_trainable_params'):
+            params = model.get_trainable_params()
+        else:
+            params = model.parameters()
+
         self.optimizer = torch.optim.AdamW(
-            model.get_trainable_params(),
-            lr=lr,
-            weight_decay=weight_decay,
+            params,
+            lr=self.lr,
+            weight_decay=train_cfg.get('weight_decay', 1e-5),
         )
 
-        # Scheduler will be created in train() with correct T_max
+        # Scheduler (created in train() with correct T_max)
         self.scheduler = None
+
+        # Tracking
         self.global_step = 0
         self.best_val_loss = float('inf')
 
-    def compute_loss(
-        self,
-        pred_actions: torch.Tensor,
-        target_actions: torch.Tensor,
-        sample_weights: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
-        """
-        Compute training loss using configured loss function.
-
-        With weighted loss:
-        - 3x weight on first 10 timesteps (reduces start error)
-        - 5x weight on gripper transitions (improves timing)
-
-        Args:
-            pred_actions: (B, T, D) predicted actions
-            target_actions: (B, T, D) ground truth actions
-            sample_weights: (B, T) optional per-timestep weights from dataset
-        """
-        # Check if loss function supports sample_weights
-        if sample_weights is not None and self.loss_type == "gripper_balanced":
-            return self.loss_fn(pred_actions, target_actions, sample_weights)
-        return self.loss_fn(pred_actions, target_actions)
-
-    def warmup_lr(self, epoch: int, warmup_epochs: int):
-        """Linear warmup for learning rate"""
-        if epoch < warmup_epochs:
-            warmup_factor = (epoch + 1) / warmup_epochs
-            for param_group in self.optimizer.param_groups:
-                param_group['lr'] = self.lr * warmup_factor
-
     def train_epoch(self, epoch: int) -> Dict[str, float]:
-        """Train for one epoch"""
+        """Train for one epoch."""
         self.model.train()
 
+        # Enable training mode on dataset if available
+        if hasattr(self.train_loader.dataset, 'train'):
+            self.train_loader.dataset.train()
+
         total_loss = 0
+        total_pos_loss = 0
+        total_grip_loss = 0
         n_batches = 0
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch}")
 
         for batch in pbar:
-            # Move to device
-            sample_weights = None
-            if self.use_precomputed:
-                # Check if using spatial tokens or pooled embeddings
-                if 'video_tokens' in batch:
-                    # Spatial tokens mode: (B, 64, 1408)
-                    video_tokens = batch['video_tokens'].to(self.device)
-                    goal_tokens = batch['goal_tokens'].to(self.device)
-                    proprio = batch['proprio'].to(self.device)
-                    target_actions = batch['actions'].to(self.device)
+            # Get batch data - spatial tokens
+            video_tokens = batch['video_tokens'].to(self.device)
+            goal_tokens = batch['goal_tokens'].to(self.device)
+            proprio = batch['proprio'].to(self.device)
+            actions = batch['actions'].to(self.device)
+            weights = batch.get('weights')
+            if weights is not None:
+                weights = weights.to(self.device)
 
-                    # Get sample weights if available (from GripperFocusedSpatialDataset)
-                    if 'weights' in batch:
-                        sample_weights = batch['weights'].to(self.device)
-
-                    pred_actions = self.model.forward_with_precomputed(
-                        video_tokens, goal_tokens, proprio
-                    )
-                else:
-                    # Pooled embeddings mode: (B, 1408)
-                    current_emb = batch['current_emb'].to(self.device)
-                    goal_emb = batch['goal_emb'].to(self.device)
-                    proprio = batch['proprio'].to(self.device)
-                    target_actions = batch['actions'].to(self.device)
-
-                    # Forward with precomputed embeddings
-                    pred_actions = self.model.forward_with_precomputed(
-                        current_emb, goal_emb, proprio
-                    )
+            # Forward pass
+            if hasattr(self.model, 'forward_with_precomputed'):
+                pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
             else:
-                video = batch['video'].to(self.device)
-                goal = batch['goal'].to(self.device)
-                proprio = batch['proprio'].to(self.device)
-                target_actions = batch['actions'].to(self.device)
+                pred = self.model(video_tokens, goal_tokens, proprio)
 
-                # Forward pass
-                pred_actions = self.model(video, goal, proprio)
-
-            # Compute loss (with sample weights if available)
-            losses = self.compute_loss(pred_actions, target_actions, sample_weights)
+            # Compute loss
+            losses = self.loss_fn(pred, actions, weights)
             loss = losses['loss']
 
             # Backward pass
@@ -190,73 +148,68 @@ class Trainer:
 
             # Gradient clipping
             if self.grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.get_trainable_params(),
-                    self.grad_clip
-                )
+                if hasattr(self.model, 'get_trainable_params'):
+                    params = self.model.get_trainable_params()
+                else:
+                    params = self.model.parameters()
+                torch.nn.utils.clip_grad_norm_(params, self.grad_clip)
 
             self.optimizer.step()
 
             # Logging
             total_loss += loss.item()
+            total_pos_loss += losses.get('pos_loss', torch.tensor(0)).item()
+            total_grip_loss += losses.get('gripper_loss', torch.tensor(0)).item()
             n_batches += 1
 
-            if self.global_step % self.log_every == 0:
-                pbar.set_postfix({'loss': loss.item()})
+            pbar.set_postfix({'loss': loss.item()})
 
-                if self.use_wandb:
-                    wandb.log({
-                        'train/loss': loss.item(),
-                        'train/lr': self.optimizer.param_groups[0]['lr'],
-                        'train/step': self.global_step,
-                    })
+            if self.use_wandb and self.global_step % self.log_every == 0:
+                wandb.log({
+                    'train/loss': loss.item(),
+                    'train/pos_loss': losses.get('pos_loss', torch.tensor(0)).item(),
+                    'train/gripper_loss': losses.get('gripper_loss', torch.tensor(0)).item(),
+                    'train/lr': self.optimizer.param_groups[0]['lr'],
+                    'train/step': self.global_step,
+                })
 
             self.global_step += 1
 
-        avg_loss = total_loss / n_batches
-        return {'loss': avg_loss}
+        return {
+            'loss': total_loss / n_batches,
+            'pos_loss': total_pos_loss / n_batches,
+            'gripper_loss': total_grip_loss / n_batches,
+        }
 
     @torch.no_grad()
     def validate(self) -> Dict[str, float]:
-        """Validation loop"""
+        """Validate model."""
         if self.val_loader is None:
             return {}
 
         self.model.eval()
 
+        # Enable eval mode on dataset if available
+        if hasattr(self.val_loader.dataset, 'eval'):
+            self.val_loader.dataset.eval()
+
         total_loss = 0
         n_batches = 0
 
         for batch in tqdm(self.val_loader, desc="Validating"):
-            if self.use_precomputed:
-                # Check if using spatial tokens or pooled embeddings
-                if 'video_tokens' in batch:
-                    video_tokens = batch['video_tokens'].to(self.device)
-                    goal_tokens = batch['goal_tokens'].to(self.device)
-                    proprio = batch['proprio'].to(self.device)
-                    target_actions = batch['actions'].to(self.device)
+            video_tokens = batch['video_tokens'].to(self.device)
+            goal_tokens = batch['goal_tokens'].to(self.device)
+            proprio = batch['proprio'].to(self.device)
+            actions = batch['actions'].to(self.device)
 
-                    pred_actions = self.model.forward_with_precomputed(
-                        video_tokens, goal_tokens, proprio
-                    )
-                else:
-                    current_emb = batch['current_emb'].to(self.device)
-                    goal_emb = batch['goal_emb'].to(self.device)
-                    proprio = batch['proprio'].to(self.device)
-                    target_actions = batch['actions'].to(self.device)
-
-                    pred_actions = self.model.forward_with_precomputed(
-                        current_emb, goal_emb, proprio
-                    )
+            # Forward pass
+            if hasattr(self.model, 'forward_with_precomputed'):
+                pred = self.model.forward_with_precomputed(video_tokens, goal_tokens, proprio)
             else:
-                video = batch['video'].to(self.device)
-                goal = batch['goal'].to(self.device)
-                proprio = batch['proprio'].to(self.device)
-                target_actions = batch['actions'].to(self.device)
+                pred = self.model(video_tokens, goal_tokens, proprio)
 
-                pred_actions = self.model(video, goal, proprio)
-
-            losses = self.compute_loss(pred_actions, target_actions)
+            # Compute loss (no weights for validation)
+            losses = self.loss_fn(pred, actions)
             total_loss += losses['loss'].item()
             n_batches += 1
 
@@ -267,63 +220,23 @@ class Trainer:
 
         return {'loss': avg_loss}
 
-    def train(self, n_epochs: int):
-        """Full training loop"""
+    def warmup_lr(self, epoch: int):
+        """Linear warmup for learning rate."""
+        if epoch < self.warmup_epochs:
+            warmup_factor = (epoch + 1) / self.warmup_epochs
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = self.lr * warmup_factor
 
-        # Create scheduler with correct T_max
-        if self.warmup_epochs < n_epochs:
-            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer,
-                T_max=n_epochs - self.warmup_epochs,
-                eta_min=self.lr * 0.01,  # Minimum LR
-            )
-
-        print(f"\nStarting training for {n_epochs} epochs")
-        print(f"  Train batches: {len(self.train_loader)}")
-        if self.val_loader:
-            print(f"  Val batches: {len(self.val_loader)}")
-        print(f"  Warmup epochs: {self.warmup_epochs}")
-        print()
-
-        for epoch in range(n_epochs):
-            # Warmup learning rate
-            if epoch < self.warmup_epochs:
-                self.warmup_lr(epoch, self.warmup_epochs)
-
-            # Train
-            train_metrics = self.train_epoch(epoch)
-            print(f"Epoch {epoch}: train_loss = {train_metrics['loss']:.4f}")
-
-            # Update scheduler (after warmup)
-            if epoch >= self.warmup_epochs and self.scheduler is not None:
-                self.scheduler.step()
-
-            # Validate
-            val_metrics = self.validate()
-            if val_metrics:
-                print(f"Epoch {epoch}: val_loss = {val_metrics['loss']:.4f}")
-
-                # Save best model
-                if val_metrics['loss'] < self.best_val_loss:
-                    self.best_val_loss = val_metrics['loss']
-                    self.save_checkpoint("best_model.pt")
-                    print(f"  New best model saved!")
-
-            # Save periodic checkpoint
-            if (epoch + 1) % 10 == 0:
-                self.save_checkpoint(f"epoch_{epoch+1}.pt")
-
-        # Save final model
-        self.save_checkpoint("final_model.pt")
-        print(f"\nTraining complete. Best val loss: {self.best_val_loss:.4f}")
-
-    def save_checkpoint(self, filename: str):
-        """Save model checkpoint"""
+    def save_checkpoint(self, filename: str, epoch: int = 0, val_loss: float = 0):
+        """Save model checkpoint."""
         checkpoint = {
+            'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'global_step': self.global_step,
+            'val_loss': val_loss,
             'best_val_loss': self.best_val_loss,
+            'config': self.config,
         }
 
         if self.scheduler is not None:
@@ -331,10 +244,9 @@ class Trainer:
 
         path = self.save_dir / filename
         torch.save(checkpoint, path)
-        print(f"Saved checkpoint: {path}")
 
-    def load_checkpoint(self, path: str):
-        """Load model checkpoint"""
+    def load_checkpoint(self, path: str) -> int:
+        """Load model checkpoint. Returns the epoch number."""
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -345,3 +257,73 @@ class Trainer:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         print(f"Loaded checkpoint: {path}")
+        return checkpoint.get('epoch', 0)
+
+    def train(self, epochs: int):
+        """Full training loop."""
+
+        # Create scheduler
+        if self.warmup_epochs < epochs:
+            self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=epochs - self.warmup_epochs,
+                eta_min=self.lr * 0.01,
+            )
+
+        print("=" * 60)
+        print("Starting Training")
+        print("=" * 60)
+        print(f"Epochs: {epochs}")
+        print(f"Train batches: {len(self.train_loader)}")
+        if self.val_loader:
+            print(f"Val batches: {len(self.val_loader)}")
+        print(f"Warmup epochs: {self.warmup_epochs}")
+        print(f"Learning rate: {self.lr}")
+        print(f"Save directory: {self.save_dir}")
+        print("=" * 60)
+        print()
+
+        for epoch in range(epochs):
+            start_time = time.time()
+
+            # Warmup learning rate
+            if epoch < self.warmup_epochs:
+                self.warmup_lr(epoch)
+
+            # Train
+            train_metrics = self.train_epoch(epoch)
+
+            # Update scheduler (after warmup)
+            if epoch >= self.warmup_epochs and self.scheduler is not None:
+                self.scheduler.step()
+
+            # Validate
+            val_metrics = self.validate()
+
+            elapsed = time.time() - start_time
+
+            # Check for best model
+            is_best = False
+            if val_metrics and val_metrics['loss'] < self.best_val_loss:
+                self.best_val_loss = val_metrics['loss']
+                is_best = True
+                self.save_checkpoint('best_model.pt', epoch, val_metrics['loss'])
+
+            # Save periodic checkpoint
+            if (epoch + 1) % self.save_every == 0:
+                self.save_checkpoint(f'epoch_{epoch+1:03d}.pt', epoch, val_metrics.get('loss', 0))
+
+            # Save latest
+            self.save_checkpoint('latest.pt', epoch, val_metrics.get('loss', 0))
+
+            # Print progress
+            val_str = f" | Val: {val_metrics['loss']:.4f}" if val_metrics else ""
+            best_str = " [BEST]" if is_best else ""
+            print(f"Epoch {epoch:3d} | Train: {train_metrics['loss']:.4f}{val_str} | Time: {elapsed:.1f}s{best_str}")
+
+        print()
+        print("=" * 60)
+        print("Training Complete!")
+        print(f"Best val loss: {self.best_val_loss:.4f}")
+        print(f"Best model: {self.save_dir / 'best_model.pt'}")
+        print("=" * 60)

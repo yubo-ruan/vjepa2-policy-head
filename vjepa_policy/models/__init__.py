@@ -1,13 +1,25 @@
-# src/models/__init__.py
-# Note: vjepa2_encoder must be imported directly to avoid circular imports
-# from .vjepa2_encoder import VJEPA2Encoder
+# V-JEPA 2 Policy Models Module
+#
+# Spatial tokens only architecture (64 tokens per modality, 8x8 grid)
 
-from .proprio_encoder import ProprioEncoder
-from .policy_head import PolicyHead
-from .full_model import VJEPA2Policy
+from .policy import (
+    PolicyHead,
+    VJEPA2Policy,
+    ProprioEncoder,
+    create_policy_head,
+    create_model,
+)
+
+# Legacy - kept for backward compatibility
+from .full_model import VJEPA2PolicySpatial
 
 __all__ = [
-    'ProprioEncoder',
+    # Primary - unified policy
     'PolicyHead',
     'VJEPA2Policy',
+    'ProprioEncoder',
+    'create_policy_head',
+    'create_model',
+    # Legacy
+    'VJEPA2PolicySpatial',
 ]

@@ -1,117 +1,206 @@
+#!/usr/bin/env python3
 """
-Evaluation script for V-JEPA 2 Policy on LIBERO benchmark
+Unified Evaluation Script for V-JEPA 2 Policy.
+
+Evaluates trained policy on LIBERO benchmark suites.
+
+Usage:
+    python scripts/evaluate.py --checkpoint best_model.pt --suite libero_spatial
+    python scripts/evaluate.py --checkpoint best_model.pt --suite libero_spatial --n_episodes 10
+    python scripts/evaluate.py --checkpoint best_model.pt --suite libero_spatial --save_videos
 """
 
 import argparse
-import yaml
 import torch
+import json
 from pathlib import Path
 import sys
 
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vjepa_policy.models.full_model import VJEPA2Policy
-from vjepa_policy.utils.evaluation import create_evaluator, VALID_SUITES
-
-
-def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file"""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+from vjepa_policy.models.policy import VJEPA2Policy
+from vjepa_policy.utils.evaluation import LIBEROEvaluator, VALID_SUITES
 
 
-def main(args):
-    # Load config
-    config = load_config(args.config)
+def main():
+    parser = argparse.ArgumentParser(description='Evaluate V-JEPA 2 Policy')
+
+    # Required
+    parser.add_argument('--checkpoint', type=str, required=True,
+                        help='Path to checkpoint file')
+
+    # Evaluation settings
+    parser.add_argument('--suite', type=str, default='libero_spatial',
+                        choices=VALID_SUITES + ['all'],
+                        help='LIBERO suite to evaluate on (or "all")')
+    parser.add_argument('--tasks', type=int, nargs='+', default=None,
+                        help='Specific task indices (default: all)')
+    parser.add_argument('--n_episodes', type=int, default=20,
+                        help='Number of episodes per task')
+    parser.add_argument('--execute_steps', type=int, default=10,
+                        help='Actions to execute before replanning')
+    parser.add_argument('--max_steps', type=int, default=300,
+                        help='Max steps per episode')
+
+    # Output
+    parser.add_argument('--save_videos', action='store_true',
+                        help='Save evaluation videos')
+    parser.add_argument('--video_dir', type=str, default='videos',
+                        help='Directory to save videos')
+    parser.add_argument('--save_results', type=str, default=None,
+                        help='File to save results JSON')
 
     # Device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    parser.add_argument('--device', type=str, default='cuda',
+                        help='Device (cuda or cpu)')
+
+    args = parser.parse_args()
+
+    # Check checkpoint exists
+    checkpoint_path = Path(args.checkpoint)
+    if not checkpoint_path.exists():
+        print(f"Error: Checkpoint not found: {checkpoint_path}")
+        return
+
+    # Load checkpoint
+    print(f"Loading checkpoint: {args.checkpoint}")
+    checkpoint = torch.load(args.checkpoint, map_location=args.device)
+
+    # Get config from checkpoint
+    config = checkpoint.get('config', {})
+    model_cfg = config.get('model', {})
+    encoder_cfg = config.get('encoder', {})
+    data_cfg = config.get('data', {})
 
     # Create model
     print("Creating model...")
     model = VJEPA2Policy(
-        vjepa2_model_path=args.model_path or config['vjepa2']['model_path'],
-        vjepa2_model_name=config['vjepa2']['model_name'],
+        vjepa2_model_path=encoder_cfg.get('model_path', '/workspace/models/vjepa2-ac-vitg.pt'),
+        vjepa2_model_name=encoder_cfg.get('model_name', 'vjepa2_vitg'),
         vjepa2_freeze=True,
-        vjepa2_num_frames=config['vjepa2']['num_frames'],
-        vjepa2_use_attentive_pool=config['vjepa2'].get('use_attentive_pool', True),
-        proprio_dim=config['proprio']['dim'],
-        proprio_history=config['proprio']['history_len'],
-        proprio_output_dim=config['proprio'].get('output_dim', 256),
-        policy_hidden_dim=config['policy']['hidden_dim'],
-        policy_n_heads=config['policy']['n_heads'],
-        policy_n_layers=config['policy']['n_layers'],
-        policy_n_context_tokens=config['policy'].get('n_context_tokens', 4),
-        action_dim=config['policy']['action_dim'],
-        chunk_size=config['policy']['chunk_size'],
-        device=device,
+        vjepa2_num_frames=encoder_cfg.get('num_frames', 16),
+        proprio_dim=model_cfg.get('proprio_dim', 15),
+        proprio_history=model_cfg.get('proprio_history', 5),
+        embed_dim=model_cfg.get('embed_dim', 1408),
+        hidden_dim=model_cfg.get('hidden_dim', 512),
+        num_heads=model_cfg.get('num_heads', 8),
+        num_layers=model_cfg.get('num_layers', 4),
+        num_spatial_tokens=model_cfg.get('num_spatial_tokens', 64),
+        action_dim=model_cfg.get('action_dim', 7),
+        chunk_size=model_cfg.get('chunk_size', 50),
+        device=args.device,
     )
 
-    # Load checkpoint
-    print(f"Loading checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location=device)
+    # Load weights
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
+    print("Model loaded successfully")
 
-    # Create evaluator
-    # Check if robust embeddings normalization was used during training
-    normalize_embeddings = config.get('robust_embeddings', {}).get('normalize', True)
-
-    evaluator = create_evaluator(
-        model=model,
-        device=device,
-        video_len=config['vjepa2']['num_frames'],
-        proprio_history=config['proprio']['history_len'],
-        chunk_size=config['policy']['chunk_size'],
-        execute_steps=config['evaluation']['execute_steps'],
-        max_episode_steps=config['evaluation']['max_episode_steps'],
-        image_size=config['vjepa2']['image_size'],
-        normalize_embeddings=normalize_embeddings,
-    )
-
-    # Run evaluation
+    # Determine suites to evaluate
     if args.suite == 'all':
-        suites = config['evaluation'].get('suites', ['libero_object', 'libero_spatial', 'libero_goal'])
-        results = evaluator.evaluate_all_suites(
-            suites=suites,
-            n_episodes_per_task=args.n_episodes,
-            save_path=args.save_results,
-        )
+        suites = config.get('evaluation', {}).get('suites', ['libero_object', 'libero_spatial', 'libero_goal'])
     else:
-        results = evaluator.evaluate_suite(
-            suite_name=args.suite,
-            n_episodes_per_task=args.n_episodes,
-            verbose=True,
+        suites = [args.suite]
+
+    all_results = {}
+
+    for suite in suites:
+        # Create evaluator
+        print(f"\nCreating evaluator for {suite}...")
+        evaluator = LIBEROEvaluator(
+            model=model,
+            device=args.device,
+            video_len=encoder_cfg.get('num_frames', 16),
+            proprio_history=model_cfg.get('proprio_history', 5),
+            chunk_size=model_cfg.get('chunk_size', 50),
+            execute_steps=args.execute_steps,
+            max_episode_steps=args.max_steps,
+            normalize_embeddings=data_cfg.get('normalize', True),
         )
 
-        # Save single suite results
-        if args.save_results:
-            import json
-            with open(args.save_results, 'w') as f:
-                json.dump(results, f, indent=2, default=str)
+        # Run evaluation
+        print()
+        print("=" * 60)
+        print(f"Evaluating on {suite}")
+        print(f"Episodes per task: {args.n_episodes}")
+        print(f"Execute steps: {args.execute_steps}")
+        print(f"Max steps: {args.max_steps}")
+        if args.tasks:
+            print(f"Tasks: {args.tasks}")
+        print("=" * 60)
+        print()
 
-    print("\nEvaluation complete!")
+        results = evaluator.evaluate_suite(
+            suite_name=suite,
+            n_episodes=args.n_episodes,
+            task_indices=args.tasks,
+            save_videos=args.save_videos,
+            video_dir=args.video_dir,
+        )
 
-    return results
+        all_results[suite] = results
+
+        # Print results for this suite
+        print()
+        print("-" * 40)
+        print(f"Results for {suite}")
+        print("-" * 40)
+
+        total_success = 0
+        total_episodes = 0
+
+        for task_idx in sorted(results.keys()):
+            task_results = results[task_idx]
+            successes = task_results.get('successes', task_results.get('success', []))
+            success = sum(successes)
+            n = len(successes)
+            rate = 100 * success / n if n > 0 else 0
+            print(f"  Task {task_idx}: {success}/{n} ({rate:.1f}%)")
+            total_success += success
+            total_episodes += n
+
+        overall = 100 * total_success / total_episodes if total_episodes > 0 else 0
+        print(f"  Overall: {total_success}/{total_episodes} ({overall:.1f}%)")
+
+    # Print final summary
+    print()
+    print("=" * 60)
+    print("Final Summary")
+    print("=" * 60)
+
+    grand_total_success = 0
+    grand_total_episodes = 0
+
+    for suite, results in all_results.items():
+        total_success = 0
+        total_episodes = 0
+        for task_results in results.values():
+            successes = task_results.get('successes', task_results.get('success', []))
+            total_success += sum(successes)
+            total_episodes += len(successes)
+        rate = 100 * total_success / total_episodes if total_episodes > 0 else 0
+        print(f"{suite}: {total_success}/{total_episodes} ({rate:.1f}%)")
+        grand_total_success += total_success
+        grand_total_episodes += total_episodes
+
+    if len(suites) > 1:
+        overall = 100 * grand_total_success / grand_total_episodes if grand_total_episodes > 0 else 0
+        print(f"\nTotal: {grand_total_success}/{grand_total_episodes} ({overall:.1f}%)")
+
+    # Save results
+    if args.save_results:
+        results_data = {
+            'checkpoint': str(args.checkpoint),
+            'suites': suites,
+            'n_episodes': args.n_episodes,
+            'execute_steps': args.execute_steps,
+            'max_steps': args.max_steps,
+            'results': {k: {str(tk): tv for tk, tv in v.items()} for k, v in all_results.items()},
+        }
+        with open(args.save_results, 'w') as f:
+            json.dump(results_data, f, indent=2, default=str)
+        print(f"\nResults saved to: {args.save_results}")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate V-JEPA 2 Policy on LIBERO")
-
-    parser.add_argument("--checkpoint", type=str, required=True,
-                        help="Path to model checkpoint")
-    parser.add_argument("--config", type=str, default="configs/default.yaml",
-                        help="Path to config file")
-    parser.add_argument("--model_path", type=str, default=None,
-                        help="Path to V-JEPA 2 weights (overrides config)")
-    parser.add_argument("--suite", type=str, default="libero_object",
-                        choices=['libero_object', 'libero_spatial', 'libero_goal', 'libero_90', 'libero_10', 'all'],
-                        help="Which LIBERO suite to evaluate")
-    parser.add_argument("--n_episodes", type=int, default=20,
-                        help="Number of episodes per task")
-    parser.add_argument("--save_results", type=str, default=None,
-                        help="Path to save results JSON")
-
-    args = parser.parse_args()
-    main(args)
+if __name__ == '__main__':
+    main()
