@@ -10,16 +10,10 @@ from .policy import (
     create_model,
 )
 
-# Legacy - kept for backward compatibility
-from .full_model import VJEPA2PolicySpatial
-
 __all__ = [
-    # Primary - unified policy
     'PolicyHead',
     'VJEPA2Policy',
     'ProprioEncoder',
     'create_policy_head',
     'create_model',
-    # Legacy
-    'VJEPA2PolicySpatial',
 ]
