@@ -2,13 +2,52 @@
 """
 Unified Training Script for V-JEPA 2 Policy.
 
-Single training script with CLI flags for all options.
-Works with precomputed spatial embeddings only.
+This script trains a goal-conditioned manipulation policy using precomputed
+V-JEPA 2 spatial embeddings. It's the main entry point for training.
+
+Architecture:
+    - Uses precomputed spatial tokens (64 per modality, 8x8 grid)
+    - Transformer decoder policy head with cross-attention
+    - Action chunking (50 timesteps per prediction)
+    - Weighted loss with gripper and temporal emphasis
+
+Training Pipeline:
+    1. Load precomputed embeddings from disk
+    2. Create PolicyDataset with augmentations (noise, gripper oversampling)
+    3. Initialize VJEPA2Policy model (V-JEPA 2 encoder is lazy-loaded, not used)
+    4. Train with AdamW optimizer and cosine LR schedule
+    5. Save best model based on validation loss
+
+Prerequisites:
+    Run precompute.py first to generate spatial embeddings:
+        python scripts/precompute.py --suite libero_spatial --output_dir /workspace/data/embeddings
 
 Usage:
+    # Basic training with default config
     python scripts/train.py --config configs/config.yaml
-    python scripts/train.py --config configs/config.yaml --save_dir /workspace/checkpoints
+
+    # Override specific settings
     python scripts/train.py --config configs/config.yaml --epochs 50 --lr 0.0001
+
+    # Enable gripper-focused augmentation
+    python scripts/train.py --config configs/config.yaml --gripper_oversample 5 --gripper_jitter 5
+
+    # Custom save directory
+    python scripts/train.py --config configs/config.yaml --save_dir /workspace/checkpoints/exp1
+
+CLI Arguments:
+    --config: Path to YAML config file (required)
+    --save_dir: Override checkpoint save directory
+    --epochs: Override number of training epochs
+    --lr: Override learning rate
+    --batch_size: Override batch size
+    --seed: Override random seed
+    --suite: Override LIBERO suite (libero_spatial, libero_object, etc.)
+    --embeddings_dir: Override embeddings directory
+    --gripper_oversample: Oversample gripper transitions (1=disabled)
+    --gripper_jitter: Temporal jitter range for transitions (0=disabled)
+    --no_wandb: Disable Weights & Biases logging
+    --run_name: Custom W&B run name
 """
 
 import argparse
@@ -17,6 +56,7 @@ import torch
 from pathlib import Path
 import sys
 
+# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from vjepa_policy.models.policy import VJEPA2Policy
@@ -24,7 +64,7 @@ from vjepa_policy.data.dataset import create_dataloaders
 from vjepa_policy.training.loss import create_loss
 from vjepa_policy.training.trainer import Trainer
 
-# Optional wandb
+# Optional wandb for experiment tracking
 try:
     import wandb
     WANDB_AVAILABLE = True
@@ -33,19 +73,28 @@ except ImportError:
 
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
+    """
+    Load configuration from YAML file.
+
+    Args:
+        config_path: Path to YAML configuration file
+
+    Returns:
+        Configuration dictionary
+    """
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
 
 def main():
+    # ========== Parse Arguments ==========
     parser = argparse.ArgumentParser(description='Train V-JEPA 2 Policy')
 
-    # Config
+    # Config file (primary source of settings)
     parser.add_argument('--config', type=str, default='configs/config.yaml',
                         help='Path to config file')
 
-    # Overrides
+    # Override options (take precedence over config file)
     parser.add_argument('--save_dir', type=str, default=None,
                         help='Override save directory')
     parser.add_argument('--epochs', type=int, default=None,
@@ -57,20 +106,20 @@ def main():
     parser.add_argument('--seed', type=int, default=None,
                         help='Override seed')
 
-    # Data
+    # Data options
     parser.add_argument('--suite', type=str, default=None,
                         choices=['libero_object', 'libero_spatial', 'libero_goal', 'libero_90', 'libero_10'],
                         help='Override LIBERO suite')
     parser.add_argument('--embeddings_dir', type=str, default=None,
                         help='Override embeddings directory')
 
-    # Gripper augmentation
+    # Gripper augmentation (key for learning precise gripper timing)
     parser.add_argument('--gripper_oversample', type=int, default=None,
                         help='Gripper transition oversampling factor (1=disabled)')
     parser.add_argument('--gripper_jitter', type=int, default=None,
                         help='Gripper jitter range in timesteps (0=disabled)')
 
-    # Logging
+    # Logging options
     parser.add_argument('--no_wandb', action='store_true',
                         help='Disable W&B logging')
     parser.add_argument('--run_name', type=str, default=None,
@@ -78,10 +127,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config
+    # ========== Load and Merge Config ==========
     config = load_config(args.config)
 
-    # Override config with CLI args
+    # Apply CLI overrides (CLI args take precedence)
     if args.epochs is not None:
         config['training']['epochs'] = args.epochs
     if args.lr is not None:
@@ -101,10 +150,10 @@ def main():
 
     save_dir = args.save_dir or config.get('logging', {}).get('checkpoint_dir', 'checkpoints')
 
-    # Device
+    # ========== Setup ==========
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Print config
+    # Print configuration summary
     print("=" * 60)
     print("V-JEPA 2 Policy Training")
     print("=" * 60)
@@ -130,7 +179,7 @@ def main():
     print("=" * 60)
     print()
 
-    # Initialize wandb
+    # ========== Initialize W&B ==========
     use_wandb = WANDB_AVAILABLE and not args.no_wandb
     if use_wandb:
         wandb.init(
@@ -139,7 +188,7 @@ def main():
             name=args.run_name or f"{config['data'].get('suite', 'libero')}_training",
         )
 
-    # Create dataloaders
+    # ========== Create Dataloaders ==========
     print("Loading data...")
     try:
         train_loader, val_loader = create_dataloaders(config)
@@ -153,7 +202,9 @@ def main():
         return
     print()
 
-    # Create model
+    # ========== Create Model ==========
+    # Note: V-JEPA 2 encoder is lazy-loaded and NOT used during training
+    # (we use precomputed embeddings). It's only loaded during evaluation.
     print("Creating model...")
     model = VJEPA2Policy(
         vjepa2_model_path=config.get('encoder', {}).get('model_path', '/workspace/models/vjepa2-ac-vitg.pt'),
@@ -180,10 +231,9 @@ def main():
         print(f"  {name}: {count / 1e6:.2f}M")
     print()
 
-    # Create loss
+    # ========== Create Loss and Trainer ==========
     loss_fn = create_loss(config)
 
-    # Create trainer
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
@@ -195,9 +245,10 @@ def main():
         use_wandb=use_wandb,
     )
 
-    # Train
+    # ========== Train ==========
     trainer.train(config['training']['epochs'])
 
+    # ========== Cleanup ==========
     if use_wandb:
         wandb.finish()
 
