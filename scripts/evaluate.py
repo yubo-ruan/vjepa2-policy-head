@@ -133,6 +133,7 @@ def main():
         action_dim=model_cfg.get('action_dim', 7),
         chunk_size=model_cfg.get('chunk_size', 50),
         use_goal_conditioned=use_goal_conditioned,
+        separate_gripper_head=model_cfg.get('separate_gripper_head', False),
         device=args.device,
     )
 

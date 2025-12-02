@@ -84,7 +84,9 @@ class PolicyHead(nn.Module):
         action_dim: Action dimensions
         proprio_dim: Encoded proprioception dimension
         n_proprio_tokens: Number of proprio context tokens
-        dropout: Dropout rate
+        dropout: Dropout rate (for FFN)
+        attn_dropout: Attention dropout rate (defaults to dropout if not specified)
+        separate_gripper_head: Use separate classification head for gripper (V9+)
     """
 
     def __init__(
@@ -99,7 +101,9 @@ class PolicyHead(nn.Module):
         proprio_dim: int = 256,
         n_proprio_tokens: int = 4,
         dropout: float = 0.1,
+        attn_dropout: Optional[float] = None,
         use_gradient_checkpointing: bool = True,
+        separate_gripper_head: bool = False,
     ):
         super().__init__()
 
@@ -109,6 +113,10 @@ class PolicyHead(nn.Module):
         self.action_dim = action_dim
         self.n_proprio_tokens = n_proprio_tokens
         self.use_gradient_checkpointing = use_gradient_checkpointing
+        self.separate_gripper_head = separate_gripper_head
+
+        # Use attn_dropout if specified, otherwise use dropout for both
+        effective_attn_dropout = attn_dropout if attn_dropout is not None else dropout
 
         # Project spatial tokens from embed_dim to hidden_dim
         self.video_proj = nn.Sequential(
@@ -142,25 +150,53 @@ class PolicyHead(nn.Module):
         self.action_queries = nn.Parameter(torch.randn(chunk_size, hidden_dim) * 0.02)
         self.pos_encoding = PositionalEncoding(hidden_dim, max_len=chunk_size)
 
-        # Transformer decoder
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=dropout,
-            batch_first=True,
-            norm_first=True,  # Pre-norm for better training stability
-            activation='gelu',
-        )
-        self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        # Build transformer decoder with explicit attention dropout
+        # Create custom decoder layers with separate attention and FFN dropout
+        decoder_layers = nn.ModuleList()
+        for _ in range(num_layers):
+            layer = nn.TransformerDecoderLayer(
+                d_model=hidden_dim,
+                nhead=num_heads,
+                dim_feedforward=hidden_dim * 4,
+                dropout=dropout,  # FFN dropout
+                batch_first=True,
+                norm_first=True,  # Pre-norm for better training stability
+                activation='gelu',
+            )
+            # Override the dropout in the attention modules with attn_dropout
+            layer.self_attn.dropout = effective_attn_dropout
+            layer.multihead_attn.dropout = effective_attn_dropout
+            decoder_layers.append(layer)
 
-        # Action output head
-        self.action_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, action_dim),
-        )
+        self.transformer = nn.TransformerDecoder(decoder_layers[0], num_layers=1)
+        # Replace the single layer with our custom layers
+        self.transformer.layers = decoder_layers
+        self.transformer.num_layers = num_layers
+
+        # Action output heads
+        if separate_gripper_head:
+            # Separate heads for position (6-DoF) and gripper (binary classification)
+            self.position_head = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, action_dim - 1),  # 6-DoF position/rotation
+            )
+            # Gripper classification head: outputs logit for CLOSE (sigmoid > 0.5 = CLOSE)
+            self.gripper_head = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim // 2, 1),  # Single logit
+            )
+        else:
+            # Original unified head
+            self.action_head = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, action_dim),
+            )
 
         # Learnable output scale - starts small to prevent tanh saturation
         self.output_scale = nn.Parameter(torch.ones(1) * 0.1)
@@ -199,6 +235,8 @@ class PolicyHead(nn.Module):
 
         Returns:
             actions: (B, chunk_size, action_dim) predicted actions
+                If separate_gripper_head=True, gripper dim is a logit (use sigmoid for prob)
+                Otherwise, all dims are in [-1, 1] from tanh
         """
         B = video_tokens.shape[0]
 
@@ -224,9 +262,21 @@ class PolicyHead(nn.Module):
         else:
             action_features = self.transformer(tgt=queries, memory=context)
 
-        # Predict actions with scaled tanh to prevent saturation
-        raw_actions = self.action_head(action_features)
-        actions = torch.tanh(raw_actions * self.output_scale)
+        # Predict actions
+        if self.separate_gripper_head:
+            # Separate heads for position and gripper
+            raw_pos = self.position_head(action_features)  # (B, T, 6)
+            pos_actions = torch.tanh(raw_pos * self.output_scale)
+
+            # Gripper logit (not passed through sigmoid here - done in loss)
+            gripper_logit = self.gripper_head(action_features)  # (B, T, 1)
+
+            # Concatenate: position (6) + gripper logit (1) = 7
+            actions = torch.cat([pos_actions, gripper_logit], dim=-1)
+        else:
+            # Original unified head
+            raw_actions = self.action_head(action_features)
+            actions = torch.tanh(raw_actions * self.output_scale)
 
         return actions
 
@@ -460,8 +510,11 @@ class VJEPA2Policy(nn.Module):
         action_dim: int = 7,
         chunk_size: int = 50,
         dropout: float = 0.1,
+        attn_dropout: Optional[float] = None,
         # Goal conditioning
         use_goal_conditioned: bool = False,
+        # Separate gripper head (V9+)
+        separate_gripper_head: bool = False,
         # Device
         device: str = "cuda",
     ):
@@ -472,6 +525,7 @@ class VJEPA2Policy(nn.Module):
         self.action_dim = action_dim
         self.num_spatial_tokens = num_spatial_tokens
         self.use_goal_conditioned = use_goal_conditioned
+        self.separate_gripper_head = separate_gripper_head
 
         # V-JEPA 2 encoder (lazy load to avoid import issues during testing)
         self._vjepa2 = None
@@ -491,7 +545,7 @@ class VJEPA2Policy(nn.Module):
 
         # Policy head - choose between regular and goal-conditioned
         PolicyHeadClass = GoalConditionedPolicyHead if use_goal_conditioned else PolicyHead
-        self.policy_head = PolicyHeadClass(
+        policy_head_kwargs = dict(
             embed_dim=embed_dim,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -502,7 +556,12 @@ class VJEPA2Policy(nn.Module):
             proprio_dim=proprio_output_dim,
             n_proprio_tokens=n_proprio_tokens,
             dropout=dropout,
+            attn_dropout=attn_dropout,
         )
+        # Only pass separate_gripper_head to PolicyHead (not GoalConditionedPolicyHead)
+        if not use_goal_conditioned:
+            policy_head_kwargs['separate_gripper_head'] = separate_gripper_head
+        self.policy_head = PolicyHeadClass(**policy_head_kwargs)
 
         self.to(device)
 
@@ -649,6 +708,8 @@ def create_policy_head(config: dict) -> PolicyHead:
         proprio_dim=256,  # Fixed proprio encoder output dim
         n_proprio_tokens=4,
         dropout=model_cfg.get('dropout', 0.1),
+        attn_dropout=model_cfg.get('attn_dropout', None),
+        separate_gripper_head=model_cfg.get('separate_gripper_head', False),
     )
 
 
@@ -674,7 +735,9 @@ def create_model(config: dict, device: str = "cuda") -> VJEPA2Policy:
         action_dim=model_cfg.get('action_dim', 7),
         chunk_size=model_cfg.get('chunk_size', 50),
         dropout=model_cfg.get('dropout', 0.1),
+        attn_dropout=model_cfg.get('attn_dropout', None),
         use_goal_conditioned=model_cfg.get('use_goal_conditioned', False),
+        separate_gripper_head=model_cfg.get('separate_gripper_head', False),
         device=device,
     )
 

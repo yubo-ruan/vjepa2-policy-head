@@ -56,6 +56,8 @@ class ActionLoss(nn.Module):
         start_steps: Number of initial timesteps to upweight (default: 10)
         transition_weight: Weight for timesteps around gripper transitions (default: 5.0)
         transition_threshold: Min gripper value change to detect transition (default: 0.5)
+        separate_gripper_head: If True, gripper is a logit (use BCE loss) (default: False)
+        focal_gamma: Focal loss gamma for gripper classification (default: 2.0)
 
     Returns:
         Dictionary containing:
@@ -76,6 +78,8 @@ class ActionLoss(nn.Module):
         start_steps: int = 10,
         transition_weight: float = 5.0,
         transition_threshold: float = 0.5,
+        separate_gripper_head: bool = False,
+        focal_gamma: float = 2.0,
     ):
         super().__init__()
         self.gripper_loss_weight = gripper_loss_weight
@@ -85,6 +89,8 @@ class ActionLoss(nn.Module):
         self.start_steps = start_steps
         self.transition_weight = transition_weight
         self.transition_threshold = transition_threshold
+        self.separate_gripper_head = separate_gripper_head
+        self.focal_gamma = focal_gamma
 
     def compute_temporal_weights(
         self,
@@ -123,6 +129,38 @@ class ActionLoss(nn.Module):
 
         return weights
 
+    def focal_loss(
+        self,
+        logits: torch.Tensor,
+        targets: torch.Tensor,
+        gamma: float = 2.0,
+    ) -> torch.Tensor:
+        """
+        Focal loss for binary classification.
+
+        Args:
+            logits: Raw logits (B, T) or (B, T, 1)
+            targets: Binary targets 0 or 1 (B, T)
+            gamma: Focusing parameter (higher = more focus on hard samples)
+
+        Returns:
+            loss: (B, T) per-sample loss
+        """
+        if logits.dim() == 3:
+            logits = logits.squeeze(-1)
+
+        # Compute BCE loss
+        bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
+
+        # Compute pt (probability of correct class)
+        probs = torch.sigmoid(logits)
+        pt = torch.where(targets == 1, probs, 1 - probs)
+
+        # Apply focal weight: (1 - pt)^gamma
+        focal_weight = (1 - pt) ** gamma
+
+        return focal_weight * bce_loss
+
     def forward(
         self,
         pred: torch.Tensor,
@@ -134,7 +172,7 @@ class ActionLoss(nn.Module):
 
         The loss computation follows these steps:
         1. Split actions into position/rotation (dims 0-5) and gripper (dim 6)
-        2. Compute L1 loss for each component
+        2. Compute L1 loss for position, BCE/focal loss for gripper (if separate head)
         3. Apply gripper class balancing if enabled
         4. Combine with gripper weight multiplier
         5. Apply temporal weights (from dataset or computed)
@@ -159,22 +197,37 @@ class ActionLoss(nn.Module):
         # Position/rotation loss (L1, averaged over action dims)
         pos_loss = F.l1_loss(pred_pos, target_pos, reduction='none').mean(dim=-1)  # (B, T)
 
-        # Gripper loss (L1)
-        grip_loss = F.l1_loss(pred_grip, target_grip, reduction='none')  # (B, T)
+        # Gripper loss
+        if self.separate_gripper_head:
+            # Gripper is a logit - use focal loss with BCE
+            # Convert target from [-1, 1] to [0, 1] for BCE
+            # -1 (OPEN) -> 0, +1 (CLOSE) -> 1
+            target_grip_binary = (target_grip > 0).float()
 
-        # Balance gripper classes (OPEN vs CLOSE are often imbalanced)
-        # This prevents the model from always predicting the majority class
-        if self.balance_gripper:
-            n_open = (target_grip < 0).float().sum() + 1e-6
-            n_close = (target_grip > 0).float().sum() + 1e-6
-            total = n_open + n_close
+            # Focal loss for gripper classification
+            grip_loss = self.focal_loss(pred_grip, target_grip_binary, gamma=self.focal_gamma)  # (B, T)
 
-            # Inverse frequency weighting
-            weight_open = total / (2 * n_open)
-            weight_close = total / (2 * n_close)
+            # Compute gripper accuracy for logging
+            pred_grip_binary = (torch.sigmoid(pred_grip) > 0.5).float()
+            gripper_acc = (pred_grip_binary == target_grip_binary).float().mean()
+        else:
+            # Original L1 loss for gripper
+            grip_loss = F.l1_loss(pred_grip, target_grip, reduction='none')  # (B, T)
+            gripper_acc = torch.tensor(0.0, device=device)
 
-            grip_weights = torch.where(target_grip < 0, weight_open, weight_close)
-            grip_loss = grip_loss * grip_weights
+            # Balance gripper classes (OPEN vs CLOSE are often imbalanced)
+            # This prevents the model from always predicting the majority class
+            if self.balance_gripper:
+                n_open = (target_grip < 0).float().sum() + 1e-6
+                n_close = (target_grip > 0).float().sum() + 1e-6
+                total = n_open + n_close
+
+                # Inverse frequency weighting
+                weight_open = total / (2 * n_open)
+                weight_close = total / (2 * n_close)
+
+                grip_weights = torch.where(target_grip < 0, weight_open, weight_close)
+                grip_loss = grip_loss * grip_weights
 
         # Combine position and gripper losses
         combined = pos_loss + self.gripper_loss_weight * grip_loss  # (B, T)
@@ -195,7 +248,7 @@ class ActionLoss(nn.Module):
         l1_loss = torch.abs(pred - target)
         loss_per_dim = l1_loss.mean(dim=(0, 1))
 
-        return {
+        result = {
             'loss': weighted_loss,
             'loss_unweighted': unweighted_loss,
             'loss_per_dim': loss_per_dim,
@@ -203,6 +256,12 @@ class ActionLoss(nn.Module):
             'gripper_loss': grip_loss.mean(),
             'weights_mean': temporal_weights.mean(),
         }
+
+        # Add gripper accuracy if using separate head
+        if self.separate_gripper_head:
+            result['gripper_acc'] = gripper_acc
+
+        return result
 
     def __call__(
         self,
@@ -226,11 +285,18 @@ def create_loss(config: dict) -> ActionLoss:
             - start_weight (default: 3.0)
             - start_steps (default: 10)
             - transition_weight (default: 5.0)
+            - separate_gripper_head (default: False) - use BCE/focal loss for gripper
+            - focal_gamma (default: 2.0) - focal loss gamma parameter
 
     Returns:
         Configured ActionLoss instance
     """
     loss_cfg = config.get('loss', {})
+    model_cfg = config.get('model', {})
+
+    # Check if separate_gripper_head is enabled in model config
+    separate_gripper_head = model_cfg.get('separate_gripper_head', False)
+
     return ActionLoss(
         gripper_loss_weight=loss_cfg.get('gripper_loss_weight', 2.0),
         balance_gripper=loss_cfg.get('balance_gripper', True),
@@ -239,6 +305,8 @@ def create_loss(config: dict) -> ActionLoss:
         start_steps=loss_cfg.get('start_steps', 10),
         transition_weight=loss_cfg.get('transition_weight', 5.0),
         transition_threshold=0.5,
+        separate_gripper_head=separate_gripper_head,
+        focal_gamma=loss_cfg.get('focal_gamma', 2.0),
     )
 
 

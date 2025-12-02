@@ -225,6 +225,7 @@ def main():
         chunk_size=config['model'].get('chunk_size', 50),
         dropout=config['model'].get('dropout', 0.1),
         use_goal_conditioned=use_goal_conditioned,
+        separate_gripper_head=config['model'].get('separate_gripper_head', False),
         device=device,
     )
 

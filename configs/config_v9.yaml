@@ -1,0 +1,89 @@
+# V-JEPA 2 Policy Configuration - v9 Separate Gripper Head with Focal Loss
+# Key changes from V7:
+# - Separate gripper head (binary classification instead of regression)
+# - Focal loss for gripper to handle class imbalance (75% OPEN, 25% CLOSE)
+# - Same V7 architecture (512 hidden, 4 layers) which achieved 10% success
+# - No attention dropout (V8's attn_dropout=0.15 hurt gripper predictions)
+
+# Model Architecture - SAME AS V7, with separate gripper head
+model:
+  embed_dim: 1408              # V-JEPA 2 ViT-Giant embedding dimension
+  hidden_dim: 512              # Same as V7 (best performing)
+  num_layers: 4                # Same as V7
+  num_heads: 8                 # Keep 8 heads
+  num_spatial_tokens: 64       # 8x8 spatial grid
+  chunk_size: 50               # Action chunk size
+  action_dim: 7                # 6 DoF + gripper
+  proprio_dim: 15              # Proprioception dimensions
+  proprio_history: 5           # Proprioception history length
+  dropout: 0.1                 # FFN dropout rate
+  # KEY V9 CHANGE: Separate gripper head with binary classification
+  separate_gripper_head: true  # Use separate head for gripper (BCE loss)
+
+# V-JEPA 2 Encoder Configuration
+encoder:
+  model_path: "/workspace/models/vjepa2-ac-vitg.pt"
+  model_name: "vjepa2_vitg"
+  freeze: true
+  num_frames: 16
+  image_size: 256
+  target_spatial: 8            # Spatial downsampling to 8x8
+
+# Data Configuration - SAME AS V7
+data:
+  embeddings_dir: /workspace/data/embeddings
+  libero_path: /workspace/data/libero
+  suite: libero_spatial        # Single suite
+  train_split: 0.9
+  # Embedding augmentation - same as V7
+  normalize: true              # L2 normalize embeddings
+  noise_std: 0.02              # Reduced noise (same as V7)
+  # Gripper augmentation - DISABLED (same as V7)
+  gripper_oversample: 1        # NO oversampling
+  gripper_jitter: 0            # NO jitter
+  # Static frame augmentation
+  static_prob: 0.25
+  beginning_prob: 0.25
+  max_beginning_frame: 30
+
+# Loss Configuration - Focal loss for gripper
+loss:
+  start_weight: 1.5            # Same as V7
+  start_steps: 10              # How many initial steps to upweight
+  transition_weight: 2.0       # Same as V7
+  transition_window: 5         # Window around transitions
+  balance_gripper: false       # Not needed with focal loss
+  gripper_loss_weight: 1.5     # Slightly higher weight for gripper BCE
+  gripper_dim: 6               # Index of gripper in action vector
+  # KEY V9 CHANGE: Focal loss parameters
+  focal_gamma: 2.0             # Focal loss gamma (focus on hard samples)
+
+# Training Configuration - SAME AS V7
+training:
+  epochs: 100                  # Same as V7
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  warmup_epochs: 5             # Same as V7
+  grad_clip: 1.0
+  use_amp: true                # Mixed precision training
+  seed: 42
+  num_workers: 4
+  save_every: 10               # Save checkpoint every 10 epochs
+  log_every: 10                # Log metrics every 10 steps
+
+# Evaluation Configuration
+evaluation:
+  execute_steps: 10            # Actions before replanning
+  max_episode_steps: 300       # Maximum episode length
+  n_episodes_per_task: 20      # Episodes per task
+  save_videos: false           # Save evaluation GIFs
+  video_fps: 30
+  suites:
+    - libero_spatial
+
+# Logging Configuration
+logging:
+  wandb_project: "vjepa2-policy"
+  log_every: 10
+  checkpoint_dir: /workspace/checkpoints_v9
