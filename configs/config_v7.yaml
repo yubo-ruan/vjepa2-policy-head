@@ -1,0 +1,86 @@
+# V-JEPA 2 Policy Configuration - v7 Back to Basics
+# Key changes from V6:
+# - Return to V3 architecture (512 hidden, 4 layers)
+# - NO gripper oversampling (natural distribution)
+# - NO gripper jitter (preserve causal relationships)
+# - Balanced loss weights (equal position/gripper)
+# - Reduced noise augmentation
+
+# Model Architecture - SAME AS V3
+model:
+  embed_dim: 1408              # V-JEPA 2 ViT-Giant embedding dimension
+  hidden_dim: 512              # Back to V3 (was 768 in V6)
+  num_layers: 4                # Back to V3 (was 6 in V6)
+  num_heads: 8                 # Keep 8 heads
+  num_spatial_tokens: 64       # 8x8 spatial grid
+  chunk_size: 50               # Action chunk size
+  action_dim: 7                # 6 DoF + gripper
+  proprio_dim: 15              # Proprioception dimensions
+  proprio_history: 5           # Proprioception history length
+  dropout: 0.1                 # Dropout rate
+
+# V-JEPA 2 Encoder Configuration
+encoder:
+  model_path: "/workspace/models/vjepa2-ac-vitg.pt"
+  model_name: "vjepa2_vitg"
+  freeze: true
+  num_frames: 16
+  image_size: 256
+  target_spatial: 8            # Spatial downsampling to 8x8
+
+# Data Configuration - MINIMAL AUGMENTATION
+data:
+  embeddings_dir: /workspace/data/embeddings
+  libero_path: /workspace/data/libero
+  suite: libero_spatial        # Single suite
+  train_split: 0.9
+  # Embedding augmentation - REDUCED
+  normalize: true              # L2 normalize embeddings
+  noise_std: 0.02              # Reduced from 0.05 (less noise)
+  # Gripper augmentation - DISABLED
+  gripper_oversample: 1        # NO oversampling (was 4 in V6, 2 in V3)
+  gripper_jitter: 0            # NO jitter (was 3 in V6)
+  # Static frame augmentation - KEEP (helps with stability)
+  static_prob: 0.25            # Probability of fully static video
+  beginning_prob: 0.25         # Probability of beginning-biased sampling
+  max_beginning_frame: 30      # Max frame for beginning sampling
+
+# Loss Configuration - BALANCED
+loss:
+  start_weight: 1.5            # Reduced from 2.0 (more balanced)
+  start_steps: 10              # How many initial steps to upweight
+  transition_weight: 2.0       # Reduced from 3.0 (less gripper focus)
+  transition_window: 5         # Window around transitions
+  balance_gripper: true        # Balance OPEN vs CLOSE samples
+  gripper_loss_weight: 1.0     # EQUAL weighting (was 2.5 in V6, 1.5 in V3)
+  gripper_dim: 6               # Index of gripper in action vector
+
+# Training Configuration - STANDARD
+training:
+  epochs: 100                  # Back to V3 (was 200 in V6)
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 1.0e-5
+  warmup_epochs: 5             # Back to V3 (was 10 in V6)
+  grad_clip: 1.0
+  use_amp: true                # Mixed precision training
+  seed: 42
+  num_workers: 4
+  save_every: 10               # Save checkpoint every 10 epochs
+  log_every: 10                # Log metrics every 10 steps
+
+# Evaluation Configuration
+evaluation:
+  execute_steps: 10            # Actions before replanning
+  max_episode_steps: 300       # Maximum episode length
+  n_episodes_per_task: 20      # Episodes per task
+  save_videos: false           # Save evaluation GIFs
+  video_fps: 30
+  suites:
+    - libero_spatial
+
+# Logging Configuration
+logging:
+  wandb_project: "vjepa2-policy"
+  log_every: 10
+  checkpoint_dir: /workspace/checkpoints_v7

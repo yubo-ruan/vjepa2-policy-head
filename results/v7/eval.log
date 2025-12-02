@@ -1,0 +1,965 @@
+[robosuite WARNING] No private macro file found! (__init__.py:7)
+[robosuite WARNING] It is recommended to use a private macro file (__init__.py:8)
+[robosuite WARNING] To setup, run: python /home/dev/.local/lib/python3.10/site-packages/robosuite/scripts/setup_macros.py (__init__.py:9)
+Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+Users of this version of Gym should be able to simply replace 'import gym' with 'import gymnasium as gym' in the vast majority of cases.
+See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+/opt/conda/lib/python3.10/site-packages/torchvision/io/image.py:13: UserWarning: Failed to load image Python extension: 'Could not load this library: /opt/conda/lib/python3.10/site-packages/torchvision/image.so'If you don't plan on using image functionality from `torchvision.io`, you can ignore this warning. Otherwise, there might be something wrong with your environment. Did you have `libjpeg` or `libpng` installed before building `torchvision` from source?
+  warn(
+/opt/conda/lib/python3.10/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/opt/conda/lib/python3.10/contextlib.py:103: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
+  self.gen = func(*args, **kwds)
+Loading checkpoint: /workspace/checkpoints_v7/best_model.pt
+Creating model...
+Model loaded successfully
+
+Creating evaluator for libero_spatial...
+
+============================================================
+Evaluating on libero_spatial
+Episodes per task: 5
+Execute steps: 10
+Max steps: 300
+============================================================
+
+
+============================================================
+Evaluating on libero_spatial
+============================================================
+[info] using task orders [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+Task 1/10: pick up the black bowl between the plate and the ramekin and place it on the plate
+Loading V-JEPA 2 from local: /workspace/models/vjepa2-ac-vitg.pt
+  Loaded encoder weights
+  Skipped AC predictor loading (not needed, saves memory)
+  Encoder frozen
+V-JEPA 2 loaded: vjepa2_vitg
+  Embed dim: 1408
+  Image size: 256
+  Num frames: 16
+  Pooling: Mean
+  Frozen: True
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, -1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, -1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 2/10: pick up the black bowl next to the ramekin and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, 1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, -1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, 1, 1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, 1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, -1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, 1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 3/10: pick up the black bowl from table center and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+    SUCCESS Length: 119, Reward: 1.00
+  Success rate: 20.0%
+
+Task 4/10: pick up the black bowl on the cookie box and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, -1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, -1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+    SUCCESS Length: 189, Reward: 1.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, -1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 20.0%
+
+Task 5/10: pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, -1, 1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, -1, 1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, -1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, -1, -1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 6/10: pick up the black bowl on the ramekin and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, -1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, -1, 1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 7/10: pick up the black bowl next to the cookie box and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+    SUCCESS Length: 126, Reward: 1.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+    SUCCESS Length: 122, Reward: 1.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+    SUCCESS Length: 121, Reward: 1.00
+  Success rate: 60.0%
+
+Task 8/10: pick up the black bowl on the stove and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, -1, -1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, -1, -1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 9/10: pick up the black bowl next to the plate and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, 1, -1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, -1, -1], result: -1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [1, 1, 1, 1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+Task 10/10: pick up the black bowl on the wooden cabinet and place it on the plate
+  Episode 1/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, -1, 1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, 1, 1], result: 1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 2/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, -1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, -1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 3/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, 1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [1, 1, -1, -1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, -1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, -1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 4/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, -1, -1, 1, -1], result: -1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, 1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Episode 5/5
+    Video tokens shape: torch.Size([1, 64, 1408])
+    Goal tokens shape: torch.Size([1, 64, 1408])
+    Video tokens[0] norm: 1.0000
+    Temporal ensembling: True
+  Step 0: 1 predictions, gripper votes: [1], result: 1.0
+  Step 0: reward=0.000, total=0.000
+  Step 50: 5 predictions, gripper votes: [1, -1, -1, 1, 1], result: 1.0
+  Step 50: reward=0.000, total=0.000
+  Step 100: 5 predictions, gripper votes: [1, 1, 1, 1, 1], result: 1.0
+  Step 100: reward=0.000, total=0.000
+  Step 150: 5 predictions, gripper votes: [-1, -1, -1, 1, 1], result: 1.0
+  Step 150: reward=0.000, total=0.000
+  Step 200: 5 predictions, gripper votes: [-1, -1, 1, 1, -1], result: -1.0
+  Step 200: reward=0.000, total=0.000
+  Step 250: 5 predictions, gripper votes: [-1, 1, -1, -1, -1], result: -1.0
+  Step 250: reward=0.000, total=0.000
+    FAIL Length: 300, Reward: 0.00
+  Success rate: 0.0%
+
+============================================================
+Suite Results: libero_spatial
+============================================================
+Overall Success Rate: 10.0%
+
+Per-task success rates:
+  pick up the black bowl between the plate and the ramekin and place it on the plate: 0.0%
+  pick up the black bowl next to the ramekin and place it on the plate: 0.0%
+  pick up the black bowl from table center and place it on the plate: 20.0%
+  pick up the black bowl on the cookie box and place it on the plate: 20.0%
+  pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate: 0.0%
+  pick up the black bowl on the ramekin and place it on the plate: 0.0%
+  pick up the black bowl next to the cookie box and place it on the plate: 60.0%
+  pick up the black bowl on the stove and place it on the plate: 0.0%
+  pick up the black bowl next to the plate and place it on the plate: 0.0%
+  pick up the black bowl on the wooden cabinet and place it on the plate: 0.0%
+
+============================================================
+Final Summary
+============================================================
+libero_spatial: 10.0%
