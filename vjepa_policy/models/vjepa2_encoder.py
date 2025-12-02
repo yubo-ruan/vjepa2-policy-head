@@ -1,28 +1,19 @@
 """
 V-JEPA 2 Encoder Wrapper
 
-Uses the official V-JEPA 2 implementation from /workspace/vjepa/
+Self-contained implementation using local vjepa_src copy.
 Loads from local checkpoint (encoder + AC predictor).
 """
-
-import sys
-from pathlib import Path
-
-# CRITICAL: Add vjepa to path BEFORE any other imports
-# This must happen at module load time to ensure vjepa's src is found
-VJEPA_REPO_PATH = "/workspace/vjepa"
-if VJEPA_REPO_PATH not in sys.path:
-    sys.path.insert(0, VJEPA_REPO_PATH)
 
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
 
-# Now import vjepa modules (they will be found in /workspace/vjepa/src/)
-from src.models import vision_transformer as vjepa_vit
-from src.models import ac_predictor as vjepa_ac
-from src.models import attentive_pooler as vjepa_pooler
-from src.hub import backbones as vjepa_backbones
+# Import from local vjepa_src (self-contained, no external dependency)
+from vjepa_src.models import vision_transformer as vjepa_vit
+from vjepa_src.models import ac_predictor as vjepa_ac
+from vjepa_src.models import attentive_pooler as vjepa_pooler
+from vjepa_src.hub import backbones as vjepa_backbones
 
 
 def _get_vjepa_modules():
